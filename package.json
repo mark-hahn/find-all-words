@@ -1,0 +1,27 @@
+{
+  "name": "find-all-words",
+  "main": "./lib/find-all-words",
+  "version": "0.1.0",
+  "description": "Atom package to instantly find a word in all files in all projects",
+  "activationCommands": {
+    "atom-workspace": [
+      "find-all-words:open"
+    ]
+  },
+  "keywords": [
+    "find",
+    "words",
+    "projects"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mark-hahn/find-all-words"
+  },
+  "license": "MIT",
+  "engines": {
+    "atom": ">1.0.0"
+  },
+  "dependencies": {
+    "sub-atom": "^1.1.0"
+  }
+}
