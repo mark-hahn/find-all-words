@@ -1,13 +1,13 @@
 'context-menu':
   'atom-workspace': [
-    label: 'Shell It' 
+    label: 'Find All Words' 
     command: 'find-all-words:open'
   ]
   
 menu: [
     label: 'Packages'
     submenu: [
-      label: 'Shell It'
+      label: 'Find All Words'
       command: 'find-all-words:open'
     ]
 ]

@@ -3,14 +3,11 @@
   "main": "./lib/find-all-words",
   "version": "0.1.0",
   "description": "Atom package to instantly find a word in all files in all projects",
-  "activationCommands": {
-    "atom-workspace": [
-      "find-all-words:open"
-    ]
-  },
+  "activationCommands": {},
   "keywords": [
     "find",
-    "words",
+    "word",
+    "files",
     "projects"
   ],
   "repository": {
@@ -22,6 +19,7 @@
     "atom": ">1.0.0"
   },
   "dependencies": {
+    "moment": "^2.11.1",
     "sub-atom": "^1.1.0"
   }
 }
