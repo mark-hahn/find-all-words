@@ -8,6 +8,12 @@ Helper  = require './helper'
 
 module.exports =
   config:
+    dataPath:
+      title: 'Data Directory'
+      description: 'Path to directory to hold .find-all-files.data'
+      type: 'string'
+      default: '~/.atom'
+      
     paths:
       title: 'Project & Parents'
       description: 'Paths of projects and/or directories containing projects ' +
@@ -28,6 +34,7 @@ module.exports =
       
   activate: ->
     @helper = new Helper @getConfig()
+    atom.config.onDidChange 'find-all-words.dataPath',  => @updateConfig()
     atom.config.onDidChange 'find-all-words.paths',     => @updateConfig()
     atom.config.onDidChange 'find-all-words.suffixes',  => @updateConfig()
     atom.config.onDidChange 'find-all-words.gitignore', => @updateConfig()
@@ -36,10 +43,21 @@ module.exports =
     @helper.send 'updateOpts', @getConfig()
     
   getConfig: ->
-    paths:     atom.config.get 'find-all-words.paths'
-    suffixes:  atom.config.get 'find-all-words.suffixes'
-    gitignore: atom.config.get 'find-all-words.gitignore'
+    pathsStr = atom.config.get 'find-all-words.paths'
+    paths = (path for path in pathsStr.split(/\s|,/g) when path)
       
+    suffixes = {}
+    suffixesStr = atom.config.get 'find-all-words.suffixes'
+    if /,\s*,/.test suffixesStr then suffixes.empty = yes
+    for suffix in suffixesStr.split(/\s|,/g) when suffix
+      if suffix is '.' then suffixes.dot = yes
+      else suffixes['.' + suffix.toLowerCase()] = yes
+
+    return {    
+      dataPath:  atom.config.get 'find-all-words.dataPath'
+      gitignore: atom.config.get 'find-all-words.gitignore' 
+      paths, suffixes
+    }
     
     # @helper.ready (err) ->
     #   if err then log 'helper ready err', err; return

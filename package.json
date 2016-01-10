@@ -19,6 +19,8 @@
     "atom": ">1.0.0"
   },
   "dependencies": {
+    "fs-plus": "^2.8.1",
+    "gitignore-parser": "0.0.2",
     "moment": "^2.11.1",
     "sub-atom": "^1.1.0"
   }

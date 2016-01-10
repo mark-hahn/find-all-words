@@ -6,4 +6,6 @@ logWithTime = (args...) ->
 
 module.exports = (modName) ->
   
-  (args...) -> logWithTime 'find-all-words',  modName.toUpperCase()+':', args...
+  (args...) -> 
+    logWithTime 'find-all-words',  modName.toUpperCase()+':', args...
+    args
