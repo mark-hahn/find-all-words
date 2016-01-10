@@ -7,11 +7,39 @@ SubAtom = require 'sub-atom'
 Helper  = require './helper'
 
 module.exports =
+  config:
+    paths:
+      title: 'Project & Parents'
+      description: 'Paths of projects and/or directories containing projects ' +
+                   '(separate with commas)'
+      type: 'string'
+      default: '~/.atom/projects'
+      
+    suffixes:
+      title: 'File Suffixes'
+      description: 'Search only in files with these suffixes (separate with commas)'
+      type: 'string'
+      default: 'coffee,js'
+      
+    gitignore:
+      title: 'Ignore files in .gitignore'
+      type: 'boolean'
+      default: yes
+      
   activate: ->
-    log 'activate'
+    @helper = new Helper @getConfig()
+    atom.config.onDidChange 'find-all-words.paths',     => @updateConfig()
+    atom.config.onDidChange 'find-all-words.suffixes',  => @updateConfig()
+    atom.config.onDidChange 'find-all-words.gitignore', => @updateConfig()
     
-    @helper = new Helper
+  updateConfig: ->
+    @helper.send 'updateOpts', @getConfig()
     
+  getConfig: ->
+    paths:     atom.config.get 'find-all-words.paths'
+    suffixes:  atom.config.get 'find-all-words.suffixes'
+    gitignore: atom.config.get 'find-all-words.gitignore'
+      
     
     # @helper.ready (err) ->
     #   if err then log 'helper ready err', err; return

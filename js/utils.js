@@ -16,7 +16,7 @@
     return function() {
       var args;
       args = 1 <= arguments.length ? slice.call(arguments, 0) : [];
-      return logWithTime.apply(null, ['find-all-words', modName.toLowerCase() + ':'].concat(slice.call(args)));
+      return logWithTime.apply(null, ['find-all-words', modName.toUpperCase() + ':'].concat(slice.call(args)));
     };
   };
 

@@ -13,7 +13,7 @@
     function HelperProcess() {
       process.on('message', (function(_this) {
         return function(msg) {
-          return _this.recv(msg);
+          return _this[msg.cmd](msg);
         };
       })(this));
       process.on('disconnect', (function(_this) {
@@ -27,8 +27,13 @@
       return process.send(msg);
     };
 
-    HelperProcess.prototype.recv = function(msg) {
-      return log('received', msg);
+    HelperProcess.prototype.init = function(opts) {
+      log('init', opts);
+      return this.words = [];
+    };
+
+    HelperProcess.prototype.updateOpts = function(opts) {
+      return log('updateOpts (not supported yet)', opts);
     };
 
     HelperProcess.prototype.destroy = function() {};
