@@ -1,44 +1,39 @@
 
-log = require('./utils') 'hlpr'
-
+log     = require('./utils') 'hlpr'
+procLog = require('./utils') 'proc'
+  
 childProcess = require 'child_process'
 
+helperPath = process.cwd() + '/js/helper-process.js' 
+  
 module.exports =
 class Helper
   
   constructor: ->
     log 'constructor'
     
-    @child = childProcess.fork '/root/.atom/packages/find-all-words/lib/helper-process'
-    @child.on 'connected', (@connected) => @init()
+    @child = childProcess.fork helperPath, silent:yes
     @child.on 'message',          (msg) => @recv msg
-    @child.on 'error',            (err) -> @error err
-    @child.on 'exit',    (code, signal) -> log 'process exit:', {code, signal}
+    @child.on 'error',            (err) => @error err
+    @child.on 'close',           (code) => log 'process exited with code', code
+    @child.stdout.on 'data',     (data) -> 
+      for line in data.toString().split '\n' when line then procLog line
+    @child.stderr.on 'data',     (data) ->
+      procLog 'STDERR ...\n', data.toString()
 
-  init: ->
-    log 'connected:', @connected
-    @readyCB?()
-    
-  ready: (@readyCB) ->
-    if @connected 
-      setImmediate => @readyCB()
-      @readyCB = null
-      
+    @send 'hello'
+
   error: (err) ->
-    @readyCB? 'error:' + err.message
-    @readyCB = null
+    log 'error:', err.message
     @child = null
     
   send: (msg) -> 
-    if @connected
-      log 'send', msg
-      @child.send msg
-  
+    @child.send msg
+    
   recv: (msg) ->
     log 'recv', msg
     
   destory: ->
-    @child.kill()
+    @child?.kill()
     @child = null
-
-
+  

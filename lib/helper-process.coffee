@@ -1,18 +1,16 @@
 
-console.log 'proc entering'
+log = (args...) -> console.log.apply console, args
 
-log = require('./utils') 'proc'
-
-helperProcess = 
-  
-  init: ->
-    log 'init'
-    process.on 'message', @recv
+class HelperProcess
+  constructor: ->
+    process.on 'message', (msg) => @recv msg
+    process.on 'disconnect',    => @destroy()
     
   send: (msg) -> process.send msg
   
-  recv: (msg) ->
-    log 'received', msg
+  recv: (msg) ->  
+    log 'received', msg 
+    
+  destroy: -> 
 
-
-helperProcess.init()
+new HelperProcess

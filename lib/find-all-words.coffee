@@ -11,9 +11,12 @@ module.exports =
     log 'activate'
     
     @helper = new Helper
-    @helper.ready (err) ->
-      if err then log 'helper ready err', err; return
-      @helper.send cmd: 'hello'
+    
+    
+    # @helper.ready (err) ->
+    #   if err then log 'helper ready err', err; return
+    #   log 'ready'
+    #   @helper.send cmd: 'hello'
     
     # @subs = new SubAtom
   #   @subs.add atom.commands.add 'atom-workspace', 'find-all-words:open': => @open()
@@ -117,5 +120,5 @@ module.exports =
   #   @panel = null
   
   deactivate: ->
-    @close()
-    @subs.dispose()
+    # @close()
+    # @subs.dispose()
