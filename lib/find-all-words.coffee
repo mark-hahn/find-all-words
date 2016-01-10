@@ -21,6 +21,12 @@ module.exports =
       type: 'string'
       default: '~/.atom/projects'
       
+    wordRegex:
+      title: 'Word Regex'
+      description: 'Regular expression to match words'
+      type: 'string'
+      default: '[a-zA-Z_\\$]\\w*'
+      
     suffixes:
       title: 'File Suffixes'
       description: 'Search only in files with these suffixes (separate with commas)'
@@ -37,6 +43,7 @@ module.exports =
     atom.config.onDidChange 'find-all-words.dataPath',  => @updateConfig()
     atom.config.onDidChange 'find-all-words.paths',     => @updateConfig()
     atom.config.onDidChange 'find-all-words.suffixes',  => @updateConfig()
+    atom.config.onDidChange 'find-all-words.wordRegex', => @updateConfig()
     atom.config.onDidChange 'find-all-words.gitignore', => @updateConfig()
     
   updateConfig: ->
@@ -54,6 +61,7 @@ module.exports =
       else suffixes['.' + suffix.toLowerCase()] = yes
 
     return {    
+      wordRegex: atom.config.get 'find-all-words.wordRegex'
       dataPath:  atom.config.get 'find-all-words.dataPath'
       gitignore: atom.config.get 'find-all-words.gitignore' 
       paths, suffixes
