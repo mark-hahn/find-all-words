@@ -6,18 +6,20 @@ util      = require 'util'
 crypto    = require 'crypto'
 gitParser = require 'gitignore-parser'
 
+FILE_IDX_INC = 32
+
 class HelperProcess
   constructor: ->
-    @filesByPath  = {}
-    @filesByIndex = []
-    @wordTrie     = {}
-    
     process.on 'message', (msg) => @[msg.cmd] msg
     process.on 'disconnect',    => @destroy()
     
   send: (msg) -> process.send msg
   
   init: (@opts) ->
+    @filesByPath  = {}
+    @filesByIndex = []
+    @wordTrie     = {}
+    
     # dataPath = path.join @opts.dataPath, '.find-all-files.data'
     # try
     #   file = fs.openSync dataPath, 'r'
@@ -29,35 +31,32 @@ class HelperProcess
     #     return
     #   log 'warning: missing data file, creating new file at', dataPath
       
-    ###
-      packed format (53 bits)
-         5 suffix
-        16 filePath
-        32 char offset
-    ###
     log '@opts', @opts
     @checkAllProjects()
     
   updateOpts: (@opts) -> @checkAllProjects()
   
   checkAllProjects: ->
+    @setAllFileRemoveMarkers()
+    
     for optPath in @opts.paths
       if @checkOneProject optPath then continue
       for projPath in fs.listSync optPath
         @checkOneProject projPath
+        
+    @removeMarkedFiles()
       
   checkOneProject: (projPath) ->
     try
       giPath = path.join projPath, '.gitignore'
-      # log 'giPath', fs.readFileSync giPath, 'utf8'
       gitignore = gitParser.compile fs.readFileSync giPath, 'utf8'
     catch e
       return no
+      
     onDir = (dirPath) => 
       dir = path.basename dirPath
-      if dir is '.git' then return false
-      # if gitignore.accepts dir then log 'onDir', dir
-      (not @opts.gitignore or gitignore.accepts dir)
+      (dir isnt '.git' and
+        (not @opts.gitignore or gitignore.accepts dir))
     onFile = (filePath) =>
       filePath = filePath.toLowerCase()
       base = path.basename filePath
@@ -65,7 +64,8 @@ class HelperProcess
       if ((sfx is  '' and @opts.suffixes.empty) or
           (sfx is '.' and @opts.suffixes.dot) or @opts.suffixes[sfx]) and 
          (not @opts.gitignore or gitignore.accepts base)
-        @checkOneFile filePath
+        setImmediate => @checkOneFile filePath
+        
     fs.traverseTreeSync projPath, onFile, onDir
     yes
   
@@ -77,11 +77,13 @@ class HelperProcess
       log 'ERROR on file stat, skipping', filePath, e.message
       return
     if not stats.isFile() then return
-    fileTime = stats.mtime.getTime()
-    if (oldFile = @filesByPath[filePath]) and 
-        fileTime is oldFile.time
-      return
+    
+    if (oldFile = @filesByPath[filePath])
+      delete oldFile.remove
       
+    fileTime = stats.mtime.getTime()
+    if fileTime is oldFile?.time then return
+
     try
       text = fs.readFileSync filePath
     catch e
@@ -99,26 +101,60 @@ class HelperProcess
     while (parts = wordRegex.exec text)
       if parts[0] not in words then words[parts[0]] = yes
     wordList = Object.keys(words).sort()
-    @checkWords filePath, fileTime, oldFile, wordList
 
-  checkWords: (filePath, fileTime, oldFile, wordList) ->
     fileIndex = oldFile?.index ? @filesByIndex.length
     fileMd5 = crypto.createHash('md5').update(wordList.join ';').digest "hex"
     @filesByPath[filePath] = @filesByIndex[fileIndex] =
       {path:filePath, index:fileIndex, time:fileTime, md5:fileMd5}
     if fileMd5 is oldFile?.md5 then return
     
-    if oldFile
-      @traverseTrie (word, fileIndexes) =>
-        
-        fileIndexes.length isnt 0
+    if oldFile then @removeFileIndexFromTrie oldFile.index
+    for word in wordList
+      @addWordFileIndexToTrie word, fileIndex
+    @normalizeTrie()
+
+  setAllFileRemoveMarkers: ->
+    for file in @filesByIndex when file
+      file.remove = yes
+
+  removeMarkedFiles: ->
+    for file in @filesByIndex when file?.remove
+      @removeFileIndexFromTrie file.index
+      delete @filesByPath[file.path]
+      delete @filesByIndex[file.index]
       
-  traverseTrie: ->  
+  addWordFileIndexToTrie: (word, fileIndex) ->
+    node = @getAddWordNodeFromTrie word
+    fileIndexes = node.fi ?= new Int16Array FILE_IDX_INC
+    for fileIdx, idx in fileIndexes when fileIdx is 0
+      fileIndexes[idx] = fileIndex
+      return
+    oldLen = fileIndexes.length
+    newLen = oldLen + FILE_IDX_INC
+    newFileIndexes = new Int16Array newLen
+    newFileIndexes.fill 0, 0, FILE_IDX_INC-1
+    newFileIndexes[FILE_IDX_INC-1] = fileIndex
+    newFileIndexes.set fileIndexes, FILE_IDX_INC
+    node.fi = newFileIndexes
+  
+  getAddWordNodeFromTrie: (word) ->
+    node = @wordTrie
+    for letter in word
+      node = node[letter] ?= {}
+    node
+    
+  removeFileIndexFromTrie: (fileIndex) ->
+    @traverseWordTrie (fileIndexes) ->
+      for fileIdx, idx in fileIndexes when fileIdx is fileIndex
+        fileIndexes[idx] = 0
+        return
+  
+  traverseWordTrie: (onFileIndexes) ->  
     visitNode = (node, word) ->
       haveChild = no
       for letter, childNode of node
         if letter is 'fi'
-          if not onFileIndexes word, childNode
+          if onFileIndexes(childNode) is false
             delete node.fi
           else haveChild = yes
         else 
@@ -127,9 +163,11 @@ class HelperProcess
           else haveChild = yes
       haveChild
     visitNode @wordTrie, ''
-  
     
-    
+  normalizeTrie: ->
+    @traverseWordTrie (fileIndexes) =>
+      Array.prototype.sort.call fileIndexes
     
   destroy: -> 
+    
 new HelperProcess
