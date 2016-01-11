@@ -6,7 +6,7 @@ util      = require 'util'
 crypto    = require 'crypto'
 gitParser = require 'gitignore-parser'
 
-FILE_IDX_INC = 32
+FILE_IDX_INC = 8
 
 class HelperProcess
   constructor: ->
@@ -41,20 +41,17 @@ class HelperProcess
     @checkAllProjects()
   
   getFilesForWord: (msg) ->
-    {word, whole} = msg
+    {word, caseSensitive, exactWord} = msg
     filePaths = {}
-    node = @getAddWordNodeFromTrie(word) ? fi:[]
-    for idx in node.fi ? [] when idx
-      filePaths[@filesByIndex[idx].path] = yes
-    if not whole
-      onFileIndexes = (indexes) =>
-        for idx in indexes when idx
-          filePaths[@filesByIndex[idx].path] = yes
-      @traverseWordTrie node, onFileIndexes
-    @send
+    onFileIndexes = (indexes) =>
+      for idx in indexes when idx
+        filePaths[@filesByIndex[idx].path] = yes
+    @traverseWordTrie word, caseSensitive, exactWord, onFileIndexes
+    @send {
       cmd:  'filesForWord'
-      word:  word
       files: Object.keys filePaths
+      word, caseSensitive, exactWord
+    }
   
   checkAllProjects: ->
     @setAllFileRemoveMarkers()
@@ -76,7 +73,6 @@ class HelperProcess
         gitParser.compile fs.readFileSync giPath, 'utf8'
       catch e
         null
-    log 'gitignore', projPath, gitignore
     onDir = (dirPath) => 
       dir = path.basename dirPath
       (dir isnt '.git' and
@@ -125,7 +121,11 @@ class HelperProcess
       words[parts[0]] = yes
     wordList = Object.keys(words).sort()
 
-    fileIndex = oldFile?.index ? @filesByIndex.length
+    if not (fileIndex = oldFile?.index)
+      for file, idx in @filesByIndex when not file
+        break
+      fileIndex = idx
+      
     fileMd5 = crypto.createHash('md5').update(wordList.join ';').digest "hex"
     @filesByPath[filePath] = @filesByIndex[fileIndex] =
       {path:filePath, index:fileIndex, time:fileTime, md5:fileMd5}
@@ -134,7 +134,6 @@ class HelperProcess
     if oldFile then @removeFileIndexFromTrie oldFile.index
     for word in wordList
       @addWordFileIndexToTrie word, fileIndex
-    @normalizeTrie()
 
   setAllFileRemoveMarkers: ->
     for file in @filesByIndex when file
@@ -146,9 +145,15 @@ class HelperProcess
       delete @filesByPath[file.path]
       delete @filesByIndex[file.index]
       
+  removeFileIndexFromTrie: (fileIndex) ->
+    @traverseWordTrie '', no, no, (fileIndexes) ->
+      for fileIdx, idx in fileIndexes when fileIdx is fileIndex
+        fileIndexes[idx] = 0
+        return
+  
   addWordFileIndexToTrie: (word, fileIndex) ->
     @wordCount++
-    node = @getAddWordNodeFromTrie word, yes
+    node = @getAddWordNodeFromTrie word
     fileIndexes = node.fi ?= new Int16Array FILE_IDX_INC
     for fileIdx, idx in fileIndexes when fileIdx is 0
       fileIndexes[idx] = fileIndex
@@ -156,47 +161,29 @@ class HelperProcess
     oldLen = fileIndexes.length
     newLen = oldLen + FILE_IDX_INC
     newFileIndexes = new Int16Array newLen
-    newFileIndexes.fill 0, 0, FILE_IDX_INC-1
     newFileIndexes[FILE_IDX_INC-1] = fileIndex
     newFileIndexes.set fileIndexes, FILE_IDX_INC
     node.fi = newFileIndexes
   
-  getAddWordNodeFromTrie: (word, add) ->
+  getAddWordNodeFromTrie: (word) ->
     node = @wordTrie
     for letter in word
       lastNode = node
       if not (node = node[letter])
-        if not add then return null
         node = lastNode[letter] = {}
     node
     
-  removeFileIndexFromTrie: (fileIndex) ->
-    @traverseWordTrie (fileIndexes) ->
-      for fileIdx, idx in fileIndexes when fileIdx is fileIndex
-        fileIndexes[idx] = 0
-        return
-  
-  traverseWordTrie: (root, onFileIndexes) ->  
-    if not onFileIndexes
-      onFileIndexes = root
-      root = @wordTrie
+  traverseWordTrie: (word, caseSensitive, exactWord, onFileIndexes) ->  
     visitNode = (node, word) ->
-      haveChild = no
-      for letter, childNode of node
-        if letter is 'fi'
-          if onFileIndexes(childNode) is false
-            delete node.fi
-          else haveChild = yes
-        else 
-          if not visitNode childNode, word+letter
-            delete node[letter]
-          else haveChild = yes
-      haveChild
-    visitNode root, ''
-    
-  normalizeTrie: ->
-    @traverseWordTrie (fileIndexes) =>
-      Array.prototype.sort.call fileIndexes
+      if not word
+        if node.fi then onFileIndexes node.fi
+        if exactWord then return
+      for letter, childNode of node when letter isnt 'fi'
+        if not word or letter is word[0] or
+           not caseSensitive and 
+             letter.toLowerCase() is word[0].toLowerCase()
+          visitNode childNode, word[1...]
+    visitNode @wordTrie, word
     
   destroy: -> 
     

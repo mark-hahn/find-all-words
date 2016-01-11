@@ -18,14 +18,14 @@ class Helper
     @child.stderr.on 'data',     (data) ->
       procLog 'STDERR ...\n', data.toString()
       
-    log 'loading words'
+    log 'loading words 2'
     @send 'init', initOpts
 
   send: (cmd, data) -> @child.send Object.assign {cmd}, data
   
   ready: (msg) ->
     log 'ready', msg
-    @send 'getFilesForWord', word: '$', whole: yes
+    @send 'getFilesForWord', word: 'a', caseSensitive: no, exactWord: no
     
   filesForWord: (msg) ->
     log 'filesForWord', msg
@@ -33,7 +33,7 @@ class Helper
   error: (err) ->
     log 'error:', err.message
     @child = null
-      
+
   destory: ->
     @child?.kill()
     @child = null

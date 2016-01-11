@@ -19,7 +19,7 @@
 
   gitParser = require('gitignore-parser');
 
-  FILE_IDX_INC = 32;
+  FILE_IDX_INC = 8;
 
   HelperProcess = (function() {
     function HelperProcess() {
@@ -56,39 +56,29 @@
     };
 
     HelperProcess.prototype.getFilesForWord = function(msg) {
-      var filePaths, i, idx, len, node, onFileIndexes, ref, ref1, ref2, whole, word;
-      word = msg.word, whole = msg.whole;
+      var caseSensitive, exactWord, filePaths, onFileIndexes, word;
+      word = msg.word, caseSensitive = msg.caseSensitive, exactWord = msg.exactWord;
       filePaths = {};
-      node = (ref = this.getAddWordNodeFromTrie(word)) != null ? ref : {
-        fi: []
-      };
-      ref2 = (ref1 = node.fi) != null ? ref1 : [];
-      for (i = 0, len = ref2.length; i < len; i++) {
-        idx = ref2[i];
-        if (idx) {
-          filePaths[this.filesByIndex[idx].path] = true;
-        }
-      }
-      if (!whole) {
-        onFileIndexes = (function(_this) {
-          return function(indexes) {
-            var j, len1, results;
-            results = [];
-            for (j = 0, len1 = indexes.length; j < len1; j++) {
-              idx = indexes[j];
-              if (idx) {
-                results.push(filePaths[_this.filesByIndex[idx].path] = true);
-              }
+      onFileIndexes = (function(_this) {
+        return function(indexes) {
+          var i, idx, len, results;
+          results = [];
+          for (i = 0, len = indexes.length; i < len; i++) {
+            idx = indexes[i];
+            if (idx) {
+              results.push(filePaths[_this.filesByIndex[idx].path] = true);
             }
-            return results;
-          };
-        })(this);
-        this.traverseWordTrie(node, onFileIndexes);
-      }
+          }
+          return results;
+        };
+      })(this);
+      this.traverseWordTrie(word, caseSensitive, exactWord, onFileIndexes);
       return this.send({
         cmd: 'filesForWord',
+        files: Object.keys(filePaths),
         word: word,
-        files: Object.keys(filePaths)
+        caseSensitive: caseSensitive,
+        exactWord: exactWord
       });
     };
 
@@ -131,7 +121,6 @@
           return null;
         }
       })();
-      log('gitignore', projPath, gitignore);
       onDir = (function(_this) {
         return function(dirPath) {
           var dir;
@@ -155,7 +144,7 @@
     };
 
     HelperProcess.prototype.checkOneFile = function(filePath) {
-      var e, fileIndex, fileMd5, fileTime, i, len, oldFile, parts, ref, stats, text, word, wordList, wordRegex, words;
+      var e, file, fileIndex, fileMd5, fileTime, i, idx, j, len, len1, oldFile, parts, ref, results, stats, text, word, wordList, wordRegex, words;
       this.fileCount++;
       try {
         stats = fs.statSync(filePath);
@@ -197,7 +186,16 @@
         words[parts[0]] = true;
       }
       wordList = Object.keys(words).sort();
-      fileIndex = (ref = oldFile != null ? oldFile.index : void 0) != null ? ref : this.filesByIndex.length;
+      if (!(fileIndex = oldFile != null ? oldFile.index : void 0)) {
+        ref = this.filesByIndex;
+        for (idx = i = 0, len = ref.length; i < len; idx = ++i) {
+          file = ref[idx];
+          if (!file) {
+            break;
+          }
+        }
+        fileIndex = idx;
+      }
       fileMd5 = crypto.createHash('md5').update(wordList.join(';')).digest("hex");
       this.filesByPath[filePath] = this.filesByIndex[fileIndex] = {
         path: filePath,
@@ -211,11 +209,12 @@
       if (oldFile) {
         this.removeFileIndexFromTrie(oldFile.index);
       }
-      for (i = 0, len = wordList.length; i < len; i++) {
-        word = wordList[i];
-        this.addWordFileIndexToTrie(word, fileIndex);
+      results = [];
+      for (j = 0, len1 = wordList.length; j < len1; j++) {
+        word = wordList[j];
+        results.push(this.addWordFileIndexToTrie(word, fileIndex));
       }
-      return this.normalizeTrie();
+      return results;
     };
 
     HelperProcess.prototype.setAllFileRemoveMarkers = function() {
@@ -247,46 +246,8 @@
       return results;
     };
 
-    HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex) {
-      var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
-      this.wordCount++;
-      node = this.getAddWordNodeFromTrie(word, true);
-      fileIndexes = node.fi != null ? node.fi : node.fi = new Int16Array(FILE_IDX_INC);
-      for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
-        fileIdx = fileIndexes[idx];
-        if (!(fileIdx === 0)) {
-          continue;
-        }
-        fileIndexes[idx] = fileIndex;
-        return;
-      }
-      oldLen = fileIndexes.length;
-      newLen = oldLen + FILE_IDX_INC;
-      newFileIndexes = new Int16Array(newLen);
-      newFileIndexes.fill(0, 0, FILE_IDX_INC - 1);
-      newFileIndexes[FILE_IDX_INC - 1] = fileIndex;
-      newFileIndexes.set(fileIndexes, FILE_IDX_INC);
-      return node.fi = newFileIndexes;
-    };
-
-    HelperProcess.prototype.getAddWordNodeFromTrie = function(word, add) {
-      var i, lastNode, len, letter, node;
-      node = this.wordTrie;
-      for (i = 0, len = word.length; i < len; i++) {
-        letter = word[i];
-        lastNode = node;
-        if (!(node = node[letter])) {
-          if (!add) {
-            return null;
-          }
-          node = lastNode[letter] = {};
-        }
-      }
-      return node;
-    };
-
     HelperProcess.prototype.removeFileIndexFromTrie = function(fileIndex) {
-      return this.traverseWordTrie(function(fileIndexes) {
+      return this.traverseWordTrie('', false, false, function(fileIndexes) {
         var fileIdx, i, idx, len;
         for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
           fileIdx = fileIndexes[idx];
@@ -299,42 +260,66 @@
       });
     };
 
-    HelperProcess.prototype.traverseWordTrie = function(root, onFileIndexes) {
-      var visitNode;
-      if (!onFileIndexes) {
-        onFileIndexes = root;
-        root = this.wordTrie;
+    HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex) {
+      var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
+      this.wordCount++;
+      node = this.getAddWordNodeFromTrie(word);
+      fileIndexes = node.fi != null ? node.fi : node.fi = new Int16Array(FILE_IDX_INC);
+      for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
+        fileIdx = fileIndexes[idx];
+        if (!(fileIdx === 0)) {
+          continue;
+        }
+        fileIndexes[idx] = fileIndex;
+        return;
       }
+      oldLen = fileIndexes.length;
+      newLen = oldLen + FILE_IDX_INC;
+      newFileIndexes = new Int16Array(newLen);
+      newFileIndexes[FILE_IDX_INC - 1] = fileIndex;
+      newFileIndexes.set(fileIndexes, FILE_IDX_INC);
+      return node.fi = newFileIndexes;
+    };
+
+    HelperProcess.prototype.getAddWordNodeFromTrie = function(word) {
+      var i, lastNode, len, letter, node;
+      node = this.wordTrie;
+      for (i = 0, len = word.length; i < len; i++) {
+        letter = word[i];
+        lastNode = node;
+        if (!(node = node[letter])) {
+          node = lastNode[letter] = {};
+        }
+      }
+      return node;
+    };
+
+    HelperProcess.prototype.traverseWordTrie = function(word, caseSensitive, exactWord, onFileIndexes) {
+      var visitNode;
       visitNode = function(node, word) {
-        var childNode, haveChild, letter;
-        haveChild = false;
+        var childNode, letter, results;
+        if (!word) {
+          if (node.fi) {
+            onFileIndexes(node.fi);
+          }
+          if (exactWord) {
+            return;
+          }
+        }
+        results = [];
         for (letter in node) {
           childNode = node[letter];
-          if (letter === 'fi') {
-            if (onFileIndexes(childNode) === false) {
-              delete node.fi;
+          if (letter !== 'fi') {
+            if (!word || letter === word[0] || !caseSensitive && letter.toLowerCase() === word[0].toLowerCase()) {
+              results.push(visitNode(childNode, word.slice(1)));
             } else {
-              haveChild = true;
-            }
-          } else {
-            if (!visitNode(childNode, word + letter)) {
-              delete node[letter];
-            } else {
-              haveChild = true;
+              results.push(void 0);
             }
           }
         }
-        return haveChild;
+        return results;
       };
-      return visitNode(root, '');
-    };
-
-    HelperProcess.prototype.normalizeTrie = function() {
-      return this.traverseWordTrie((function(_this) {
-        return function(fileIndexes) {
-          return Array.prototype.sort.call(fileIndexes);
-        };
-      })(this));
+      return visitNode(this.wordTrie, word);
     };
 
     HelperProcess.prototype.destroy = function() {};
