@@ -47,13 +47,38 @@
       this.filesByPath = {};
       this.filesByIndex = [];
       this.wordTrie = {};
-      log('@opts', this.opts);
       return this.checkAllProjects();
     };
 
     HelperProcess.prototype.updateOpts = function(opts) {
       this.opts = opts;
       return this.checkAllProjects();
+    };
+
+    HelperProcess.prototype.getFilesForWord = function(msg) {
+      var idx, node, word;
+      word = msg.word;
+      if (!(node = this.getAddWordNodeFromTrie(word)) || !node.fi) {
+        node = {
+          fi: []
+        };
+      }
+      return this.send({
+        cmd: 'filesForWord',
+        word: word,
+        files: (function() {
+          var i, len, ref, results;
+          ref = node.fi;
+          results = [];
+          for (i = 0, len = ref.length; i < len; i++) {
+            idx = ref[i];
+            if (idx) {
+              results.push(this.filesByIndex[idx].path);
+            }
+          }
+          return results;
+        }).call(this)
+      });
     };
 
     HelperProcess.prototype.checkAllProjects = function() {
@@ -71,11 +96,7 @@
           this.checkOneProject(projPath);
         }
       }
-      this.removeMarkedFiles();
-      return log({
-        fileCount: this.fileCount,
-        wordCount: this.wordCount
-      });
+      return this.removeMarkedFiles();
     };
 
     HelperProcess.prototype.checkOneProject = function(projPath) {
@@ -207,7 +228,7 @@
     HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex) {
       var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
       this.wordCount++;
-      node = this.getAddWordNodeFromTrie(word);
+      node = this.getAddWordNodeFromTrie(word, true);
       fileIndexes = node.fi != null ? node.fi : node.fi = new Int16Array(FILE_IDX_INC);
       for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
         fileIdx = fileIndexes[idx];
@@ -226,12 +247,18 @@
       return node.fi = newFileIndexes;
     };
 
-    HelperProcess.prototype.getAddWordNodeFromTrie = function(word) {
-      var i, len, letter, node;
+    HelperProcess.prototype.getAddWordNodeFromTrie = function(word, add) {
+      var i, lastNode, len, letter, node;
       node = this.wordTrie;
       for (i = 0, len = word.length; i < len; i++) {
         letter = word[i];
-        node = node[letter] != null ? node[letter] : node[letter] = {};
+        lastNode = node;
+        if (!(node = node[letter])) {
+          if (!add) {
+            return null;
+          }
+          node = lastNode[letter] = {};
+        }
       }
       return node;
     };

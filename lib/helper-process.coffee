@@ -33,10 +33,19 @@ class HelperProcess
     #     return
     #   log 'warning: missing data file, creating new file at', dataPath
       
-    log '@opts', @opts
+    # log '@opts', @opts
     @checkAllProjects()
     
   updateOpts: (@opts) -> @checkAllProjects()
+  
+  getFilesForWord: (msg) ->
+    {word} = msg
+    if not (node = @getAddWordNodeFromTrie word) or not node.fi
+      node = fi: []
+    @send
+      cmd:  'filesForWord'
+      word:  word
+      files: (@filesByIndex[idx].path for idx in node.fi when idx)
   
   checkAllProjects: ->
     @setAllFileRemoveMarkers()
@@ -46,7 +55,7 @@ class HelperProcess
       for projPath in fs.listSync optPath
         @checkOneProject projPath
     @removeMarkedFiles()
-    log {@fileCount, @wordCount}
+    # log {@fileCount, @wordCount}
     # log {@filesByIndex, @wordTrie}
       
   checkOneProject: (projPath) ->
@@ -129,7 +138,7 @@ class HelperProcess
       
   addWordFileIndexToTrie: (word, fileIndex) ->
     @wordCount++
-    node = @getAddWordNodeFromTrie word
+    node = @getAddWordNodeFromTrie word, yes
     fileIndexes = node.fi ?= new Int16Array FILE_IDX_INC
     for fileIdx, idx in fileIndexes when fileIdx is 0
       fileIndexes[idx] = fileIndex
@@ -142,10 +151,13 @@ class HelperProcess
     newFileIndexes.set fileIndexes, FILE_IDX_INC
     node.fi = newFileIndexes
   
-  getAddWordNodeFromTrie: (word) ->
+  getAddWordNodeFromTrie: (word, add) ->
     node = @wordTrie
     for letter in word
-      node = node[letter] ?= {}
+      lastNode = node
+      if not (node = node[letter])
+        if not add then return null
+        node = lastNode[letter] = {}
     node
     
   removeFileIndexFromTrie: (fileIndex) ->
