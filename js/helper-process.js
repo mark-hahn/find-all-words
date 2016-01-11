@@ -42,6 +42,8 @@
 
     HelperProcess.prototype.init = function(opts) {
       this.opts = opts;
+      this.fileCount = 0;
+      this.wordCount = 0;
       this.filesByPath = {};
       this.filesByIndex = [];
       this.wordTrie = {};
@@ -69,7 +71,11 @@
           this.checkOneProject(projPath);
         }
       }
-      return this.removeMarkedFiles();
+      this.removeMarkedFiles();
+      return log({
+        fileCount: this.fileCount,
+        wordCount: this.wordCount
+      });
     };
 
     HelperProcess.prototype.checkOneProject = function(projPath) {
@@ -95,9 +101,7 @@
           base = path.basename(filePath);
           sfx = path.extname(filePath);
           if (((sfx === '' && _this.opts.suffixes.empty) || (sfx === '.' && _this.opts.suffixes.dot) || _this.opts.suffixes[sfx]) && (!_this.opts.gitignore || gitignore.accepts(base))) {
-            return setImmediate(function() {
-              return _this.checkOneFile(filePath);
-            });
+            return _this.checkOneFile(filePath);
           }
         };
       })(this);
@@ -107,7 +111,7 @@
 
     HelperProcess.prototype.checkOneFile = function(filePath) {
       var e, fileIndex, fileMd5, fileTime, i, len, oldFile, parts, ref, ref1, stats, text, word, wordList, wordRegex, words;
-      log('checkOneFile', filePath);
+      this.fileCount++;
       try {
         stats = fs.statSync(filePath);
       } catch (_error) {
@@ -202,6 +206,7 @@
 
     HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex) {
       var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
+      this.wordCount++;
       node = this.getAddWordNodeFromTrie(word);
       fileIndexes = node.fi != null ? node.fi : node.fi = new Int16Array(FILE_IDX_INC);
       for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {

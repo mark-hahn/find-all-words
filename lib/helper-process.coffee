@@ -16,6 +16,8 @@ class HelperProcess
   send: (msg) -> process.send msg
   
   init: (@opts) ->
+    @fileCount = 0
+    @wordCount = 0
     @filesByPath  = {}
     @filesByIndex = []
     @wordTrie     = {}
@@ -43,8 +45,9 @@ class HelperProcess
       if @checkOneProject optPath then continue
       for projPath in fs.listSync optPath
         @checkOneProject projPath
-        
     @removeMarkedFiles()
+    log {@fileCount, @wordCount}
+    # log {@filesByIndex, @wordTrie}
       
   checkOneProject: (projPath) ->
     try
@@ -52,11 +55,12 @@ class HelperProcess
       gitignore = gitParser.compile fs.readFileSync giPath, 'utf8'
     catch e
       return no
-      
+
     onDir = (dirPath) => 
       dir = path.basename dirPath
       (dir isnt '.git' and
         (not @opts.gitignore or gitignore.accepts dir))
+
     onFile = (filePath) =>
       filePath = filePath.toLowerCase()
       base = path.basename filePath
@@ -64,13 +68,13 @@ class HelperProcess
       if ((sfx is  '' and @opts.suffixes.empty) or
           (sfx is '.' and @opts.suffixes.dot) or @opts.suffixes[sfx]) and 
          (not @opts.gitignore or gitignore.accepts base)
-        setImmediate => @checkOneFile filePath
+        @checkOneFile filePath
         
     fs.traverseTreeSync projPath, onFile, onDir
     yes
   
   checkOneFile: (filePath) ->
-    log 'checkOneFile', filePath
+    @fileCount++
     try
       stats = fs.statSync filePath
     catch e
@@ -124,6 +128,7 @@ class HelperProcess
       delete @filesByIndex[file.index]
       
   addWordFileIndexToTrie: (word, fileIndex) ->
+    @wordCount++
     node = @getAddWordNodeFromTrie word
     fileIndexes = node.fi ?= new Int16Array FILE_IDX_INC
     for fileIdx, idx in fileIndexes when fileIdx is 0
