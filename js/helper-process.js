@@ -56,28 +56,39 @@
     };
 
     HelperProcess.prototype.getFilesForWord = function(msg) {
-      var idx, node, word;
-      word = msg.word;
-      if (!(node = this.getAddWordNodeFromTrie(word)) || !node.fi) {
-        node = {
-          fi: []
-        };
+      var filePaths, i, idx, len, node, onFileIndexes, ref, ref1, ref2, whole, word;
+      word = msg.word, whole = msg.whole;
+      filePaths = {};
+      node = (ref = this.getAddWordNodeFromTrie(word)) != null ? ref : {
+        fi: []
+      };
+      ref2 = (ref1 = node.fi) != null ? ref1 : [];
+      for (i = 0, len = ref2.length; i < len; i++) {
+        idx = ref2[i];
+        if (idx) {
+          filePaths[this.filesByIndex[idx].path] = true;
+        }
+      }
+      if (!whole) {
+        onFileIndexes = (function(_this) {
+          return function(indexes) {
+            var j, len1, results;
+            results = [];
+            for (j = 0, len1 = indexes.length; j < len1; j++) {
+              idx = indexes[j];
+              if (idx) {
+                results.push(filePaths[_this.filesByIndex[idx].path] = true);
+              }
+            }
+            return results;
+          };
+        })(this);
+        this.traverseWordTrie(node, onFileIndexes);
       }
       return this.send({
         cmd: 'filesForWord',
         word: word,
-        files: (function() {
-          var i, len, ref, results;
-          ref = node.fi;
-          results = [];
-          for (i = 0, len = ref.length; i < len; i++) {
-            idx = ref[i];
-            if (idx) {
-              results.push(this.filesByIndex[idx].path);
-            }
-          }
-          return results;
-        }).call(this)
+        files: Object.keys(filePaths)
       });
     };
 
@@ -277,8 +288,12 @@
       });
     };
 
-    HelperProcess.prototype.traverseWordTrie = function(onFileIndexes) {
+    HelperProcess.prototype.traverseWordTrie = function(root, onFileIndexes) {
       var visitNode;
+      if (!onFileIndexes) {
+        onFileIndexes = root;
+        root = this.wordTrie;
+      }
       visitNode = function(node, word) {
         var childNode, haveChild, letter;
         haveChild = false;
@@ -300,7 +315,7 @@
         }
         return haveChild;
       };
-      return visitNode(this.wordTrie, '');
+      return visitNode(root, '');
     };
 
     HelperProcess.prototype.normalizeTrie = function() {

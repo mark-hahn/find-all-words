@@ -19,13 +19,11 @@ class Helper
       procLog 'STDERR ...\n', data.toString()
     @send 'init', initOpts
     
-    setTimeout =>
-      log '@send getFilesForWord'
-      @send 'getFilesForWord', word: 'retur'
-    , 30e3
+    log '@send getFilesForWord'
+    @send 'getFilesForWord', word: 'etFilesForWord', whole: yes
     
   send: (cmd, data) -> @child.send Object.assign {cmd}, data
-    
+  
   filesForWord: (msg) ->
     log 'filesForWord', msg
     

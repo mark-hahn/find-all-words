@@ -39,13 +39,20 @@ class HelperProcess
   updateOpts: (@opts) -> @checkAllProjects()
   
   getFilesForWord: (msg) ->
-    {word} = msg
-    if not (node = @getAddWordNodeFromTrie word) or not node.fi
-      node = fi: []
+    {word, whole} = msg
+    filePaths = {}
+    node = @getAddWordNodeFromTrie(word) ? fi:[]
+    for idx in node.fi ? [] when idx
+      filePaths[@filesByIndex[idx].path] = yes
+    if not whole
+      onFileIndexes = (indexes) =>
+        for idx in indexes when idx
+          filePaths[@filesByIndex[idx].path] = yes
+      @traverseWordTrie node, onFileIndexes
     @send
       cmd:  'filesForWord'
       word:  word
-      files: (@filesByIndex[idx].path for idx in node.fi when idx)
+      files: Object.keys filePaths
   
   checkAllProjects: ->
     @setAllFileRemoveMarkers()
@@ -166,7 +173,10 @@ class HelperProcess
         fileIndexes[idx] = 0
         return
   
-  traverseWordTrie: (onFileIndexes) ->  
+  traverseWordTrie: (root, onFileIndexes) ->  
+    if not onFileIndexes
+      onFileIndexes = root
+      root = @wordTrie
     visitNode = (node, word) ->
       haveChild = no
       for letter, childNode of node
@@ -179,7 +189,7 @@ class HelperProcess
             delete node[letter]
           else haveChild = yes
       haveChild
-    visitNode @wordTrie, ''
+    visitNode root, ''
     
   normalizeTrie: ->
     @traverseWordTrie (fileIndexes) =>
