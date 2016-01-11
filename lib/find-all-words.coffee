@@ -16,7 +16,7 @@ module.exports =
       
     paths:
       title: 'Project & Parents'
-      description: 'Paths of projects and/or directories containing projects ' +
+      description: 'Paths to projects and/or directories containing projects ' +
                    '(separate with commas)'
       type: 'string'
       default: '~/.atom/projects'
@@ -31,10 +31,11 @@ module.exports =
       title: 'File Suffixes'
       description: 'Search only in files with these suffixes (separate with commas)'
       type: 'string'
-      default: 'coffee,js'
+      default: 'coffee, js'
       
     gitignore:
-      title: 'Ignore files in .gitignore'
+      title: 'Use git'
+      description: 'All projects have .git folder and ignore files in .gitignore'
       type: 'boolean'
       default: yes
       
@@ -58,7 +59,8 @@ module.exports =
     if /,\s*,/.test suffixesStr then suffixes.empty = yes
     for suffix in suffixesStr.split(/\s|,/g) when suffix
       if suffix is '.' then suffixes.dot = yes
-      else suffixes['.' + suffix.toLowerCase()] = yes
+      else 
+        suffixes['.' + suffix.toLowerCase().replace /\./g, ''] = yes
 
     return {    
       wordRegex: atom.config.get 'find-all-words.wordRegex'

@@ -36,7 +36,9 @@ class HelperProcess
     # log '@opts', @opts
     @checkAllProjects()
     
-  updateOpts: (@opts) -> @checkAllProjects()
+  updateOpts: (@opts) -> 
+    @regexStr = null
+    @checkAllProjects()
   
   getFilesForWord: (msg) ->
     {word, whole} = msg
@@ -56,36 +58,37 @@ class HelperProcess
   
   checkAllProjects: ->
     @setAllFileRemoveMarkers()
-    
     for optPath in @opts.paths
       if @checkOneProject optPath then continue
       for projPath in fs.listSync optPath
-        @checkOneProject projPath
+        if fs.isDirectorySync projPath
+          @checkOneProject projPath
     @removeMarkedFiles()
-    # log {@fileCount, @wordCount}
-    # log {@filesByIndex, @wordTrie}
+    @send {cmd: 'ready', @fileCount, @wordCount}
       
   checkOneProject: (projPath) ->
-    try
-      giPath = path.join projPath, '.gitignore'
-      gitignore = gitParser.compile fs.readFileSync giPath, 'utf8'
-    catch e
+    if @opts.gitignore and
+       not fs.isDirectorySync path.join projPath, '.git'
       return no
-
+    gitignore = @opts.gitignore and
+      try
+        giPath = path.join projPath, '.gitignore'
+        gitParser.compile fs.readFileSync giPath, 'utf8'
+      catch e
+        null
+    log 'gitignore', projPath, gitignore
     onDir = (dirPath) => 
       dir = path.basename dirPath
       (dir isnt '.git' and
-        (not @opts.gitignore or gitignore.accepts dir))
-
+        (not gitignore or gitignore.accepts dir))
     onFile = (filePath) =>
       filePath = filePath.toLowerCase()
       base = path.basename filePath
       sfx  = path.extname  filePath
       if ((sfx is  '' and @opts.suffixes.empty) or
           (sfx is '.' and @opts.suffixes.dot) or @opts.suffixes[sfx]) and 
-         (not @opts.gitignore or gitignore.accepts base)
+         (not gitignore or gitignore.accepts base)
         @checkOneFile filePath
-        
     fs.traverseTreeSync projPath, onFile, onDir
     yes
   
@@ -109,17 +112,17 @@ class HelperProcess
     catch e
       log 'ERROR reading file, skipping', filePath, e.message
       return
-    words = {}
     if not @regexStr
       try
-        wordRegex = new RegExp @opts.wordRegex, 'g'
+        new RegExp @opts.wordRegex
         @regexStr = @opts.wordRegex
       catch e
-        log 'ERROR parsing word regex, using "[^\d]\\w*"', regexStr, e.message
-        @regexStr = "\\w+"
+        log 'ERROR parsing word regex, using "[a-zA-Z_\\$]\\w*"', regexStr, e.message
+        @regexStr = "[a-zA-Z_\\$]\\w*"
+    words = {}
     wordRegex = new RegExp @regexStr, 'g'
     while (parts = wordRegex.exec text)
-      if parts[0] not in words then words[parts[0]] = yes
+      words[parts[0]] = yes
     wordList = Object.keys(words).sort()
 
     fileIndex = oldFile?.index ? @filesByIndex.length

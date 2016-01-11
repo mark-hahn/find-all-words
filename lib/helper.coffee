@@ -17,13 +17,16 @@ class Helper
       for line in data.toString().split '\n' when line then procLog line
     @child.stderr.on 'data',     (data) ->
       procLog 'STDERR ...\n', data.toString()
+      
+    log 'loading words'
     @send 'init', initOpts
-    
-    log '@send getFilesForWord'
-    @send 'getFilesForWord', word: 'etFilesForWord', whole: yes
-    
+
   send: (cmd, data) -> @child.send Object.assign {cmd}, data
   
+  ready: (msg) ->
+    log 'ready', msg
+    @send 'getFilesForWord', word: '$', whole: yes
+    
   filesForWord: (msg) ->
     log 'filesForWord', msg
     
