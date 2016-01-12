@@ -51,18 +51,16 @@ class HelperProcess
     @send {cmd: 'scanned', @fileCount, @wordCount}
 
   getFilesForWord: (msg) ->
-    {word, caseSensitive, exactWord, assign, func, none} = msg
+    {word, caseSensitive, exactWord, assign, none} = msg
     filePaths = {}
     onFileIndexes = (indexes) =>
       for idx in indexes when idx
         filePaths[@filesByIndex[idx].path] = yes
-    if assign and func and none
+    if assign and none
       @traverseWordTrie word, caseSensitive, exactWord, 'all', onFileIndexes
     else
       if assign
         @traverseWordTrie word, caseSensitive, exactWord, 'assign', onFileIndexes
-      if func
-        @traverseWordTrie word, caseSensitive, exactWord, 'func', onFileIndexes
       if none
         @traverseWordTrie word, caseSensitive, exactWord, 'none', onFileIndexes
     @send {
@@ -122,32 +120,27 @@ class HelperProcess
         log 'ERROR parsing word regex, using "[a-zA-Z_\\$]\\w*"', regexStr, e.message
         @regexStr = "[a-zA-Z_\\$]\\w*"
     wordsAssign = {}
-    wordsFunc   = {}
     wordsNone   = {}
     wordRegex = new RegExp @regexStr, 'g'
     while (parts = wordRegex.exec text)
       word = parts[0]
       if word not of wordsAssign and
-         word not of wordsFunc   and
          word not of wordsNone
         idx = wordRegex.lastIndex
         before = text[0...idx-word.length]
         after  = text[idx...]
         eqMatch = (lftRegex, rgtRegex) ->
           lftRegex.test(before) and rgtRegex.test(after)
-        if /^\s*=/.test(after) or
+        if /^\s*=/.test(after)                    or
+           /function\s+$/.test(before)            or
            eqMatch( /\{([^,}]*,)*([^,:}]+:)?\s*$/, 
-                    /^\s*(,[^,}]* )*\}\s*=/ ) or
+                    /^\s*(,[^,}]* )*\}\s*=/ )     or
            eqMatch( /\[([^,\]]*,)*\s*$/,
                     /^\s*(,[^,\]]*)*\]\s*=/ )
-          wordsEqual[word] = yes
-          continue
-        if /function\s+$/.test before
-          wordsFunc[word] = yes
-          continue
-        wordsNone[word] = yes
+          wordsAssign[word] = yes
+        else
+          wordsNone[word] = yes
     wordsAssignList = Object.keys(wordsAssign).sort()
-    wordsFuncList   = Object.keys(wordsFunc  ).sort()
     wordsNoneList   = Object.keys(wordsNone  ).sort()
 
     if not (fileIndex = oldFile?.index)
@@ -155,7 +148,6 @@ class HelperProcess
         break
       fileIndex = idx
     allWords = wordsAssignList.join(';') + ';;' +
-               wordsFuncList  .join(';') + ';;' +
                wordsNoneList  .join(';')
     fileMd5 = crypto.createHash('md5').update(allWords).digest "hex"
     @filesByPath[filePath] = @filesByIndex[fileIndex] =
@@ -165,8 +157,6 @@ class HelperProcess
     if oldFile then @removeFileIndexFromTrie oldFile.index
     for word in wordsAssignList
       @addWordFileIndexToTrie word, fileIndex, 'as'
-    for word in wordsFuncList
-      @addWordFileIndexToTrie word, fileIndex, 'fu'
     for word in wordsNoneList
       @addWordFileIndexToTrie word, fileIndex, 'no'
 
@@ -211,12 +201,10 @@ class HelperProcess
   traverseWordTrie: (word, caseSensitive, exactWord, type, onFileIndexes) ->  
     visitNode = (node, word) ->
       if not word
-        if node.assign and type in ['all', 'assign']
-          onFileIndexes node.assign
-        if node.func and type in ['all', 'func']
-          onFileIndexes node.func
-        if node.none and type in ['all', 'none']
-          onFileIndexes node.none
+        if node.as and type in ['all', 'assign']
+          onFileIndexes node.as
+        if node.no and type in ['all', 'none']
+          onFileIndexes node.no
         if exactWord then return
       for letter, childNode of node when letter.length is 1
         if not word or letter is word[0] or
