@@ -6,7 +6,7 @@ util      = require 'util'
 crypto    = require 'crypto'
 gitParser = require 'gitignore-parser'
 
-FILE_IDX_INC = 8
+FILE_IDX_INC = 1
 
 class HelperProcess
   constructor: ->
@@ -42,6 +42,7 @@ class HelperProcess
     @wordCount = 0
     @setAllFileRemoveMarkers()
     for optPath in @opts.paths
+      log 'optPath', optPath
       if @checkOneProject optPath then continue
       for projPath in fs.listSync optPath
         if fs.isDirectorySync projPath
@@ -125,6 +126,8 @@ class HelperProcess
         after  = text[idx...]
         if /^\s*=/.test(after)                            or
            /function\s+$/.test(before)                    or
+           /for\s+(\w+,)?\s*$/.test(before) and 
+             /^\s+(in|of)\s/.test(after)                  or
            /\{([^,}]*,)*([^,:}]+:)?\s*$/.test(before) and 
              /^\s*(,[^,}]* )*\}\s*=/.test(after)          or
            /\[([^,\]]*,)*\s*$/.test(before) and 
@@ -213,7 +216,7 @@ class HelperProcess
     visitNode @wordTrie, wordIn, ''
   
   saveAllData: ->
-    log 'saveAllData 1'
+    log 'saveAllData start'
     
     tmpPath = @opts.dataPath + '.tmp'
     fd = fs.openSync tmpPath, 'w'
@@ -223,7 +226,7 @@ class HelperProcess
       buf     = new Buffer 4 + jsonLen
       buf.writeInt32BE jsonLen, 0
       buf.write json, 4
-      fs.writeSync fd, buf
+      fs.writeSync fd, buf, 0, buf.length
     writeJson @opts
     writeJson @filesByIndex
     @traverseWordTrie '', no, no, 'all', (fileIndexes, word, type) ->
@@ -232,16 +235,15 @@ class HelperProcess
       buf    = new Buffer 4 + hdrLen
       buf.writeInt32BE hdrLen, 0
       buf.write hdr, 4
-      fs.writeSync fd, buf
-      bufIdx = fileIndexes.buffer
+      fs.writeSync fd, buf, 0, buf.length
+      bufIdx = new Buffer fileIndexes.buffer
       buf = new Buffer 4
       buf.writeInt32BE bufIdx.length, 0
-      fs.writeSync fd, buf
-      fs.writeSync fd, bufIdx
-      log 'saveAllData', fd, tmpPath, hdr, hdrLen, bufIdx.length
+      fs.writeSync fd, buf, 0, buf.length
+      fs.writeSync fd, bufIdx, 0, bufIdx.length
     fs.closeSync fd
-    # fs.removeSync @opts.dataPath
-    # fs.moveSync tmpPath, @opts.dataPath
+    fs.removeSync @opts.dataPath
+    fs.moveSync tmpPath, @opts.dataPath
     
   loadAllData: ->
     

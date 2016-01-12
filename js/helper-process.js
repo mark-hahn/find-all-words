@@ -19,7 +19,7 @@
 
   gitParser = require('gitignore-parser');
 
-  FILE_IDX_INC = 8;
+  FILE_IDX_INC = 1;
 
   HelperProcess = (function() {
     function HelperProcess() {
@@ -61,6 +61,7 @@
       ref = this.opts.paths;
       for (i = 0, len = ref.length; i < len; i++) {
         optPath = ref[i];
+        log('optPath', optPath);
         if (this.checkOneProject(optPath)) {
           continue;
         }
@@ -188,7 +189,7 @@
           idx = wordRegex.lastIndex;
           before = text.slice(0, idx - word.length);
           after = text.slice(idx);
-          if (/^\s*=/.test(after) || /function\s+$/.test(before) || /\{([^,}]*,)*([^,:}]+:)?\s*$/.test(before) && /^\s*(,[^,}]* )*\}\s*=/.test(after) || /\[([^,\]]*,)*\s*$/.test(before) && /^\s*(,[^,\]]*)*\]\s*=/.test(after)) {
+          if (/^\s*=/.test(after) || /function\s+$/.test(before) || /for\s+(\w+,)?\s*$/.test(before) && /^\s+(in|of)\s/.test(after) || /\{([^,}]*,)*([^,:}]+:)?\s*$/.test(before) && /^\s*(,[^,}]* )*\}\s*=/.test(after) || /\[([^,\]]*,)*\s*$/.test(before) && /^\s*(,[^,\]]*)*\]\s*=/.test(after)) {
             wordsAssign[word] = true;
             delete wordsNone[word];
           } else {
@@ -344,7 +345,7 @@
 
     HelperProcess.prototype.saveAllData = function() {
       var fd, tmpPath, writeJson;
-      log('saveAllData 1');
+      log('saveAllData start');
       tmpPath = this.opts.dataPath + '.tmp';
       fd = fs.openSync(tmpPath, 'w');
       writeJson = function(obj) {
@@ -354,7 +355,7 @@
         buf = new Buffer(4 + jsonLen);
         buf.writeInt32BE(jsonLen, 0);
         buf.write(json, 4);
-        return fs.writeSync(fd, buf);
+        return fs.writeSync(fd, buf, 0, buf.length);
       };
       writeJson(this.opts);
       writeJson(this.filesByIndex);
@@ -365,15 +366,16 @@
         buf = new Buffer(4 + hdrLen);
         buf.writeInt32BE(hdrLen, 0);
         buf.write(hdr, 4);
-        fs.writeSync(fd, buf);
-        bufIdx = fileIndexes.buffer;
+        fs.writeSync(fd, buf, 0, buf.length);
+        bufIdx = new Buffer(fileIndexes.buffer);
         buf = new Buffer(4);
         buf.writeInt32BE(bufIdx.length, 0);
-        fs.writeSync(fd, buf);
-        fs.writeSync(fd, bufIdx);
-        return log('saveAllData', fd, tmpPath, hdr, hdrLen, bufIdx.length);
+        fs.writeSync(fd, buf, 0, buf.length);
+        return fs.writeSync(fd, bufIdx, 0, bufIdx.length);
       });
-      return fs.closeSync(fd);
+      fs.closeSync(fd);
+      fs.removeSync(this.opts.dataPath);
+      return fs.moveSync(tmpPath, this.opts.dataPath);
     };
 
     HelperProcess.prototype.loadAllData = function() {};
