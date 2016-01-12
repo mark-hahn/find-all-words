@@ -23,14 +23,16 @@ class Helper
 
   send: (cmd, data) -> @child.send Object.assign {cmd}, data
   
+# [a, asdf, b] = x
+  
   scanned: (msg) ->
     log 'scanned', msg
-    @send 'getFilesForWord', word: 'helperPath', \
-              caseSensitive: yes, exactWord: yes, assign:yes
+    @send 'getFilesForWord', word: 'asd', \
+              caseSensitive: yes, exactWord: no, assign:yes, none: no
     
   filesForWord: (msg) ->
     log 'filesForWord', msg
-    
+
   error: (err) ->
     log 'error:', err.message
     @child = null

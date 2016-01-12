@@ -56,6 +56,8 @@ class HelperProcess
     onFileIndexes = (indexes) =>
       for idx in indexes when idx
         filePaths[@filesByIndex[idx].path] = yes
+    # if word is 'asdf'
+      # log 'getFilesForWord', word, assign, none
     if assign and none
       @traverseWordTrie word, caseSensitive, exactWord, 'all', onFileIndexes
     else
@@ -66,9 +68,9 @@ class HelperProcess
     @send {
       cmd:  'filesForWord'
       files: Object.keys filePaths
-      word, caseSensitive, exactWord
+      word, caseSensitive, exactWord, assign, none
     }
-  
+
   checkOneProject: (projPath) ->
     if @opts.gitignore and
        not fs.isDirectorySync path.join projPath, '.git'
@@ -124,32 +126,32 @@ class HelperProcess
     wordRegex = new RegExp @regexStr, 'g'
     while (parts = wordRegex.exec text)
       word = parts[0]
-      if word not of wordsAssign and
-         word not of wordsNone
-        idx = wordRegex.lastIndex
+      if word not of wordsAssign
+        idx    = wordRegex.lastIndex
         before = text[0...idx-word.length]
         after  = text[idx...]
-        eqMatch = (lftRegex, rgtRegex) ->
-          lftRegex.test(before) and rgtRegex.test(after)
-        if /^\s*=/.test(after)                    or
-           /function\s+$/.test(before)            or
-           eqMatch( /\{([^,}]*,)*([^,:}]+:)?\s*$/, 
-                    /^\s*(,[^,}]* )*\}\s*=/ )     or
-           eqMatch( /\[([^,\]]*,)*\s*$/,
-                    /^\s*(,[^,\]]*)*\]\s*=/ )
+        if /^\s*=/.test(after)                            or
+           /function\s+$/.test(before)                    or
+           /\{([^,}]*,)*([^,:}]+:)?\s*$/.test(before) and 
+             /^\s*(,[^,}]* )*\}\s*=/.test(after)          or
+           /\[([^,\]]*,)*\s*$/.test(before) and 
+             /^\s*(,[^,\]]*)*\]\s*=/.test(after) 
           wordsAssign[word] = yes
+          delete wordsNone[word]
         else
           wordsNone[word] = yes
     wordsAssignList = Object.keys(wordsAssign).sort()
     wordsNoneList   = Object.keys(wordsNone  ).sort()
-
+    
+    allWords = wordsAssignList.join(';') + ';;' +
+               wordsNoneList  .join(';')
+    fileMd5 = crypto.createHash('md5').update(allWords).digest "hex"
+    
     if not (fileIndex = oldFile?.index)
       for file, idx in @filesByIndex when not file
         break
       fileIndex = idx
-    allWords = wordsAssignList.join(';') + ';;' +
-               wordsNoneList  .join(';')
-    fileMd5 = crypto.createHash('md5').update(allWords).digest "hex"
+      
     @filesByPath[filePath] = @filesByIndex[fileIndex] =
       {path:filePath, index:fileIndex, time:fileTime, md5:fileMd5}
     if fileMd5 is oldFile?.md5 then return
@@ -177,6 +179,8 @@ class HelperProcess
         return
   
   addWordFileIndexToTrie: (word, fileIndex, type) ->
+    if word is 'asdf'
+      log 'addWordFileIndexToTrie', word, fileIndex, type
     @wordCount++
     node = @getAddWordNodeFromTrie word
     fileIndexes = node[type] ?= new Int16Array FILE_IDX_INC
@@ -197,8 +201,10 @@ class HelperProcess
       if not (node = node[letter])
         node = lastNode[letter] = {}
     node
-    
-  traverseWordTrie: (word, caseSensitive, exactWord, type, onFileIndexes) ->  
+  
+  traverseWordTrie: (word, caseSensitive, exactWord, type, onFileIndexes) -> 
+    # if word is 'asdf'
+      # log 'traverseWordTrie', type
     visitNode = (node, word) ->
       if not word
         if node.as and type in ['all', 'assign']

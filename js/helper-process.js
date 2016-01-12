@@ -112,7 +112,9 @@
         files: Object.keys(filePaths),
         word: word,
         caseSensitive: caseSensitive,
-        exactWord: exactWord
+        exactWord: exactWord,
+        assign: assign,
+        none: none
       });
     };
 
@@ -150,7 +152,7 @@
     };
 
     HelperProcess.prototype.checkOneFile = function(filePath) {
-      var after, allWords, before, e, eqMatch, file, fileIndex, fileMd5, fileTime, i, idx, j, k, len, len1, len2, oldFile, parts, ref, results, stats, text, word, wordRegex, wordsAssign, wordsAssignList, wordsNone, wordsNoneList;
+      var after, allWords, before, e, file, fileIndex, fileMd5, fileTime, i, idx, j, k, len, len1, len2, oldFile, parts, ref, results, stats, text, word, wordRegex, wordsAssign, wordsAssignList, wordsNone, wordsNoneList;
       this.fileCount++;
       try {
         stats = fs.statSync(filePath);
@@ -191,15 +193,13 @@
       wordRegex = new RegExp(this.regexStr, 'g');
       while ((parts = wordRegex.exec(text))) {
         word = parts[0];
-        if (!(word in wordsAssign) && !(word in wordsNone)) {
+        if (!(word in wordsAssign)) {
           idx = wordRegex.lastIndex;
           before = text.slice(0, idx - word.length);
           after = text.slice(idx);
-          eqMatch = function(lftRegex, rgtRegex) {
-            return lftRegex.test(before) && rgtRegex.test(after);
-          };
-          if (/^\s*=/.test(after) || /function\s+$/.test(before) || eqMatch(/\{([^,}]*,)*([^,:}]+:)?\s*$/, /^\s*(,[^,}]* )*\}\s*=/) || eqMatch(/\[([^,\]]*,)*\s*$/, /^\s*(,[^,\]]*)*\]\s*=/)) {
+          if (/^\s*=/.test(after) || /function\s+$/.test(before) || /\{([^,}]*,)*([^,:}]+:)?\s*$/.test(before) && /^\s*(,[^,}]* )*\}\s*=/.test(after) || /\[([^,\]]*,)*\s*$/.test(before) && /^\s*(,[^,\]]*)*\]\s*=/.test(after)) {
             wordsAssign[word] = true;
+            delete wordsNone[word];
           } else {
             wordsNone[word] = true;
           }
@@ -207,6 +207,8 @@
       }
       wordsAssignList = Object.keys(wordsAssign).sort();
       wordsNoneList = Object.keys(wordsNone).sort();
+      allWords = wordsAssignList.join(';') + ';;' + wordsNoneList.join(';');
+      fileMd5 = crypto.createHash('md5').update(allWords).digest("hex");
       if (!(fileIndex = oldFile != null ? oldFile.index : void 0)) {
         ref = this.filesByIndex;
         for (idx = i = 0, len = ref.length; i < len; idx = ++i) {
@@ -217,8 +219,6 @@
         }
         fileIndex = idx;
       }
-      allWords = wordsAssignList.join(';') + ';;' + wordsNoneList.join(';');
-      fileMd5 = crypto.createHash('md5').update(allWords).digest("hex");
       this.filesByPath[filePath] = this.filesByIndex[fileIndex] = {
         path: filePath,
         index: fileIndex,
@@ -288,6 +288,9 @@
 
     HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex, type) {
       var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
+      if (word === 'asdf') {
+        log('addWordFileIndexToTrie', word, fileIndex, type);
+      }
       this.wordCount++;
       node = this.getAddWordNodeFromTrie(word);
       fileIndexes = node[type] != null ? node[type] : node[type] = new Int16Array(FILE_IDX_INC);
