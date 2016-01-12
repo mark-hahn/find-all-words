@@ -90,7 +90,7 @@
 
     HelperProcess.prototype.scanAll = function() {
       var j, k, len, len1, optPath, projPath, ref, ref1;
-      this.filesChecked = this.indexesAdded = this.timeMismatchCount = this.md5MismatchCount = this.removedCount = this.changeCount = 0;
+      this.filesChecked = this.filesAdded = this.filesRemoved = this.indexesAdded = this.timeMismatchCount = this.md5MismatchCount = this.changeCount = 0;
       this.setAllFileRemoveMarkers();
       ref = this.opts.paths;
       for (j = 0, len = ref.length; j < len; j++) {
@@ -115,9 +115,10 @@
         cmd: 'scanned',
         indexesAdded: this.indexesAdded,
         filesChecked: this.filesChecked,
+        filesAdded: this.filesAdded,
+        filesRemoved: this.filesRemoved,
         timeMismatchCount: this.timeMismatchCount,
         md5MismatchCount: this.md5MismatchCount,
-        removedCount: this.removedCount,
         changeCount: this.changeCount
       });
     };
@@ -170,6 +171,8 @@
       }
       if ((oldFile = this.filesByPath[filePath])) {
         delete oldFile.remove;
+      } else {
+        this.filesAdded++;
       }
       fileTime = stats.mtime.getTime();
       if (fileTime === (oldFile != null ? oldFile.time : void 0)) {
@@ -262,7 +265,7 @@
         if (!(file != null ? file.remove : void 0)) {
           continue;
         }
-        this.removedCount++;
+        this.filesRemoved++;
         this.changeCount++;
         this.removeFileIndexFromTrie(file.index);
         delete this.filesByPath[file.path];
@@ -352,7 +355,7 @@
 
     HelperProcess.prototype.saveAllData = function() {
       var fd, tmpPath, writeJson;
-      log('saveAllData start');
+      log('saving to', this.opts.dataPath);
       tmpPath = this.opts.dataPath + '.tmp';
       fd = fs.openSync(tmpPath, 'w');
       writeJson = function(obj) {
@@ -386,7 +389,7 @@
 
     HelperProcess.prototype.loadAllData = function() {
       var buf, e, fd, file, fileIndexes, hdr, hdrLen, i, idxLen, j, jsonLen, k, len, readLen, ref, ref1, ref2, type, word;
-      log('loading ...');
+      log('loading from', this.opts.dataPath);
       this.filesByIndex = [];
       this.filesByPath = {};
       this.wordTrie = {};
@@ -394,6 +397,7 @@
         fd = fs.openSync(this.opts.dataPath, 'r');
       } catch (_error) {
         e = _error;
+        log('Warning: data file missing:', this.opts.dataPath);
         return;
       }
       readLen = function() {
@@ -413,7 +417,9 @@
       ref = this.filesByIndex;
       for (j = 0, len = ref.length; j < len; j++) {
         file = ref[j];
-        this.filesByPath[file.path] = file;
+        if (file) {
+          this.filesByPath[file.path] = file;
+        }
       }
       while ((hdrLen = readLen())) {
         buf = new Buffer(hdrLen);

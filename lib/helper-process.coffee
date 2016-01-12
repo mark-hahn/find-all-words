@@ -44,9 +44,10 @@ class HelperProcess
     }
 
   scanAll: ->
-    @filesChecked = @indexesAdded = 
+    @filesChecked = 
+      @filesAdded = @filesRemoved = @indexesAdded = 
       @timeMismatchCount = @md5MismatchCount =
-      @removedCount = @changeCount = 0
+      @changeCount = 0
     @setAllFileRemoveMarkers()
     for optPath in @opts.paths
       log 'scanning', optPath
@@ -55,12 +56,12 @@ class HelperProcess
         if fs.isDirectorySync projPath
           @scanProject projPath
     @removeMarkedFiles()
-    if @changeCount
-      @saveAllData()
-    @send {cmd: 'scanned', 
-             @indexesAdded, @filesChecked, \
+    @saveAllData() if @changeCount
+    @send {cmd: 'scanned', \
+             @indexesAdded, @filesChecked,
+             @filesAdded, @filesRemoved,
              @timeMismatchCount, @md5MismatchCount, 
-             @removedCount, @changeCount }
+             @changeCount }
 
 ################## PRIVATE ##################
 
@@ -100,6 +101,8 @@ class HelperProcess
     
     if (oldFile = @filesByPath[filePath])
       delete oldFile.remove
+    else
+      @filesAdded++ 
       
     fileTime = stats.mtime.getTime()
     if fileTime is oldFile?.time then return
@@ -163,7 +166,7 @@ class HelperProcess
 
   removeMarkedFiles: ->
     for file in @filesByIndex when file?.remove
-      @removedCount++
+      @filesRemoved++
       @changeCount++
       @removeFileIndexFromTrie file.index
       delete @filesByPath[file.path]
@@ -217,7 +220,7 @@ class HelperProcess
     visitNode @wordTrie, wordIn, ''
   
   saveAllData: ->
-    log 'saveAllData start'
+    log 'saving to', @opts.dataPath
     tmpPath = @opts.dataPath + '.tmp'
     fd = fs.openSync tmpPath, 'w'
     writeJson = (obj) ->
@@ -245,13 +248,14 @@ class HelperProcess
     fs.moveSync tmpPath, @opts.dataPath
     
   loadAllData: ->
-    log 'loading ...'
+    log 'loading from', @opts.dataPath
     @filesByIndex = []
     @filesByPath  = {}
     @wordTrie     = {}
     try
       fd = fs.openSync @opts.dataPath, 'r'
     catch e
+      log 'Warning: data file missing:', @opts.dataPath
       return
     readLen = ->
       buf = new Buffer 4
@@ -262,7 +266,7 @@ class HelperProcess
     buf = new Buffer jsonLen
     fs.readSync fd, buf, 0, jsonLen
     @filesByIndex = JSON.parse buf.toString()
-    for file in @filesByIndex
+    for file in @filesByIndex when file
       @filesByPath[file.path] = file
     while (hdrLen = readLen())
       buf = new Buffer hdrLen
