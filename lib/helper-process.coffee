@@ -3,15 +3,26 @@ log       = (args...) -> console.log.apply console, args
 fs        = require 'fs-plus'
 path      = require 'path'
 util      = require 'util'
+net       = require 'net'
 crypto    = require 'crypto'
 gitParser = require 'gitignore-parser'
 
 FILE_IDX_INC = 1
+pipePath = 
+  if (process.platform is 'win32') 
+    '\\\\.\\pipe\\atomfindallwords.sock'
+  else '/tmp/atomfindallwords.sock'
 
 class HelperProcess
   constructor: ->
-    process.on 'message', (msg) => @[msg.cmd] msg
-    process.on 'disconnect',    => @destroy()
+    # process.on 'message', (msg) => @[msg.cmd] msg
+    # process.on 'disconnect',    => @destroy()
+
+    @server = net.createServer (args...) =>
+      log 'server connected', args
+      
+    @server.listen pipePath, (args...) =>
+      log 'server listen', args
     
   send: (msg) -> process.send msg
   
