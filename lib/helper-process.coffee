@@ -20,7 +20,6 @@ class HelperProcess
     @filesByIndex = []
     @wordTrie     = {}
     
-    # dataPath = path.join @opts.dataPath, '.find-all-files.data'
     # try
     #   file = fs.openSync dataPath, 'r'
     # catch e
@@ -48,6 +47,7 @@ class HelperProcess
         if fs.isDirectorySync projPath
           @checkOneProject projPath
     @removeMarkedFiles()
+    @saveAllData()
     @send {cmd: 'scanned', @fileCount, @wordCount}
 
   getFilesForWord: (msg) ->
@@ -114,16 +114,9 @@ class HelperProcess
     catch e
       log 'ERROR reading file, skipping', filePath, e.message
       return
-    if not @regexStr
-      try
-        new RegExp @opts.wordRegex
-        @regexStr = @opts.wordRegex
-      catch e
-        log 'ERROR parsing word regex, using "[a-zA-Z_\\$]\\w*"', regexStr, e.message
-        @regexStr = "[a-zA-Z_\\$]\\w*"
     wordsAssign = {}
     wordsNone   = {}
-    wordRegex = new RegExp @regexStr, 'g'
+    wordRegex = new RegExp @opts.wordRegexStr, 'g'
     while (parts = wordRegex.exec text)
       word = parts[0]
       if word not of wordsAssign
@@ -179,8 +172,8 @@ class HelperProcess
         return
   
   addWordFileIndexToTrie: (word, fileIndex, type) ->
-    if word is 'asdf'
-      log 'addWordFileIndexToTrie', word, fileIndex, type
+    # if word is 'asdf'
+      # log 'addWordFileIndexToTrie', word, fileIndex, type
     @wordCount++
     node = @getAddWordNodeFromTrie word
     fileIndexes = node[type] ?= new Int16Array FILE_IDX_INC
@@ -202,23 +195,57 @@ class HelperProcess
         node = lastNode[letter] = {}
     node
   
-  traverseWordTrie: (word, caseSensitive, exactWord, type, onFileIndexes) -> 
-    # if word is 'asdf'
+  traverseWordTrie: (wordIn, caseSensitive, exactWord, type, onFileIndexes) -> 
+    # if wordIn is 'asdf'
       # log 'traverseWordTrie', type
-    visitNode = (node, word) ->
-      if not word
+    visitNode = (node, wordLeft, wordForNode) ->
+      if not wordLeft
         if node.as and type in ['all', 'assign']
-          onFileIndexes node.as
+          onFileIndexes node.as, wordForNode, 'as'
         if node.no and type in ['all', 'none']
-          onFileIndexes node.no
+          onFileIndexes node.no, wordForNode, 'no'
         if exactWord then return
       for letter, childNode of node when letter.length is 1
-        if not word or letter is word[0] or
+        if not wordLeft or letter is wordLeft[0] or
            not caseSensitive and 
-             letter.toLowerCase() is word[0].toLowerCase()
-          visitNode childNode, word[1...]
-    visitNode @wordTrie, word
+             letter.toLowerCase() is wordLeft[0].toLowerCase()
+          visitNode childNode, wordLeft[1...], wordForNode + letter
+    visitNode @wordTrie, wordIn, ''
+  
+  saveAllData: ->
+    log 'saveAllData 1'
     
+    tmpPath = @opts.dataPath + '.tmp'
+    fd = fs.openSync tmpPath, 'w'
+    writeJson = (obj) ->
+      json    = JSON.stringify obj
+      jsonLen = Buffer.byteLength json
+      buf     = new Buffer 4 + jsonLen
+      buf.writeInt32BE jsonLen, 0
+      buf.write json, 4
+      fs.writeSync fd, buf
+    writeJson @opts
+    writeJson @filesByIndex
+    @traverseWordTrie '', no, no, 'all', (fileIndexes, word, type) ->
+      hdr    = word + ';' + type
+      hdrLen = Buffer.byteLength hdr
+      buf    = new Buffer 4 + hdrLen
+      buf.writeInt32BE hdrLen, 0
+      buf.write hdr, 4
+      fs.writeSync fd, buf
+      bufIdx = fileIndexes.buffer
+      buf = new Buffer 4
+      buf.writeInt32BE bufIdx.length, 0
+      fs.writeSync fd, buf
+      fs.writeSync fd, bufIdx
+      log 'saveAllData', fd, tmpPath, hdr, hdrLen, bufIdx.length
+    fs.closeSync fd
+    # fs.removeSync @opts.dataPath
+    # fs.moveSync tmpPath, @opts.dataPath
+    
+  loadAllData: ->
+    
+      
   destroy: -> 
     
 new HelperProcess

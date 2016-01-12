@@ -73,6 +73,7 @@
         }
       }
       this.removeMarkedFiles();
+      this.saveAllData();
       return this.send({
         cmd: 'scanned',
         fileCount: this.fileCount,
@@ -178,19 +179,9 @@
         log('ERROR reading file, skipping', filePath, e.message);
         return;
       }
-      if (!this.regexStr) {
-        try {
-          new RegExp(this.opts.wordRegex);
-          this.regexStr = this.opts.wordRegex;
-        } catch (_error) {
-          e = _error;
-          log('ERROR parsing word regex, using "[a-zA-Z_\\$]\\w*"', regexStr, e.message);
-          this.regexStr = "[a-zA-Z_\\$]\\w*";
-        }
-      }
       wordsAssign = {};
       wordsNone = {};
-      wordRegex = new RegExp(this.regexStr, 'g');
+      wordRegex = new RegExp(this.opts.wordRegexStr, 'g');
       while ((parts = wordRegex.exec(text))) {
         word = parts[0];
         if (!(word in wordsAssign)) {
@@ -288,9 +279,6 @@
 
     HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex, type) {
       var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
-      if (word === 'asdf') {
-        log('addWordFileIndexToTrie', word, fileIndex, type);
-      }
       this.wordCount++;
       node = this.getAddWordNodeFromTrie(word);
       fileIndexes = node[type] != null ? node[type] : node[type] = new Int16Array(FILE_IDX_INC);
@@ -323,16 +311,16 @@
       return node;
     };
 
-    HelperProcess.prototype.traverseWordTrie = function(word, caseSensitive, exactWord, type, onFileIndexes) {
+    HelperProcess.prototype.traverseWordTrie = function(wordIn, caseSensitive, exactWord, type, onFileIndexes) {
       var visitNode;
-      visitNode = function(node, word) {
+      visitNode = function(node, wordLeft, wordForNode) {
         var childNode, letter, results;
-        if (!word) {
+        if (!wordLeft) {
           if (node.as && (type === 'all' || type === 'assign')) {
-            onFileIndexes(node.as);
+            onFileIndexes(node.as, wordForNode, 'as');
           }
           if (node.no && (type === 'all' || type === 'none')) {
-            onFileIndexes(node.no);
+            onFileIndexes(node.no, wordForNode, 'no');
           }
           if (exactWord) {
             return;
@@ -342,8 +330,8 @@
         for (letter in node) {
           childNode = node[letter];
           if (letter.length === 1) {
-            if (!word || letter === word[0] || !caseSensitive && letter.toLowerCase() === word[0].toLowerCase()) {
-              results.push(visitNode(childNode, word.slice(1)));
+            if (!wordLeft || letter === wordLeft[0] || !caseSensitive && letter.toLowerCase() === wordLeft[0].toLowerCase()) {
+              results.push(visitNode(childNode, wordLeft.slice(1), wordForNode + letter));
             } else {
               results.push(void 0);
             }
@@ -351,8 +339,44 @@
         }
         return results;
       };
-      return visitNode(this.wordTrie, word);
+      return visitNode(this.wordTrie, wordIn, '');
     };
+
+    HelperProcess.prototype.saveAllData = function() {
+      var fd, tmpPath, writeJson;
+      log('saveAllData 1');
+      tmpPath = this.opts.dataPath + '.tmp';
+      fd = fs.openSync(tmpPath, 'w');
+      writeJson = function(obj) {
+        var buf, json, jsonLen;
+        json = JSON.stringify(obj);
+        jsonLen = Buffer.byteLength(json);
+        buf = new Buffer(4 + jsonLen);
+        buf.writeInt32BE(jsonLen, 0);
+        buf.write(json, 4);
+        return fs.writeSync(fd, buf);
+      };
+      writeJson(this.opts);
+      writeJson(this.filesByIndex);
+      this.traverseWordTrie('', false, false, 'all', function(fileIndexes, word, type) {
+        var buf, bufIdx, hdr, hdrLen;
+        hdr = word + ';' + type;
+        hdrLen = Buffer.byteLength(hdr);
+        buf = new Buffer(4 + hdrLen);
+        buf.writeInt32BE(hdrLen, 0);
+        buf.write(hdr, 4);
+        fs.writeSync(fd, buf);
+        bufIdx = fileIndexes.buffer;
+        buf = new Buffer(4);
+        buf.writeInt32BE(bufIdx.length, 0);
+        fs.writeSync(fd, buf);
+        fs.writeSync(fd, bufIdx);
+        return log('saveAllData', fd, tmpPath, hdr, hdrLen, bufIdx.length);
+      });
+      return fs.closeSync(fd);
+    };
+
+    HelperProcess.prototype.loadAllData = function() {};
 
     HelperProcess.prototype.destroy = function() {};
 

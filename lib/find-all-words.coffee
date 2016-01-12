@@ -5,76 +5,17 @@ fs      = require 'fs'
 util    = require 'util'
 SubAtom = require 'sub-atom'
 Helper  = require './helper'
+config  = require './config'
 
 module.exports =
-  config:
-    dataPath:
-      title: 'Data Directory'
-      description: 'Path to directory to hold .find-all-files.data'
-      type: 'string'
-      default: '~/.atom'
-      
-    paths:
-      title: 'Project & Parents'
-      description: 'Paths to projects and/or directories containing projects ' +
-                   '(separate with commas)'
-      type: 'string'
-      default: '~/.atom/projects'
-      
-    wordRegex:
-      title: 'Word Regex'
-      description: 'Regular expression to match words'
-      type: 'string'
-      default: '[a-zA-Z_\\$]\\w*'
-      
-    suffixes:
-      title: 'File Suffixes'
-      description: 'Search only in files with these suffixes (separate with commas)'
-      type: 'string'
-      default: 'coffee, js'
-      
-    gitignore:
-      title: 'Use git'
-      description: 'All projects have .git folder and ignore files in .gitignore'
-      type: 'boolean'
-      default: yes
+  config: config.config
       
   activate: ->
-    @helper = new Helper @getConfig()
-    atom.config.onDidChange 'find-all-words.dataPath',  => @updateConfig()
-    atom.config.onDidChange 'find-all-words.paths',     => @updateConfig()
-    atom.config.onDidChange 'find-all-words.suffixes',  => @updateConfig()
-    atom.config.onDidChange 'find-all-words.wordRegex', => @updateConfig()
-    atom.config.onDidChange 'find-all-words.gitignore', => @updateConfig()
+    @subs = new SubAtom
+    @helper = new Helper config.get()
+    config.onChange @subs, => @helper.send 'updateOpts', config.get()
     
-  updateConfig: ->
-    @helper.send 'updateOpts', @getConfig()
-    
-  getConfig: ->
-    pathsStr = atom.config.get 'find-all-words.paths'
-    paths = (path for path in pathsStr.split(/\s|,/g) when path)
-      
-    suffixes = {}
-    suffixesStr = atom.config.get 'find-all-words.suffixes'
-    if /,\s*,/.test suffixesStr then suffixes.empty = yes
-    for suffix in suffixesStr.split(/\s|,/g) when suffix
-      if suffix is '.' then suffixes.dot = yes
-      else 
-        suffixes['.' + suffix.toLowerCase().replace /\./g, ''] = yes
-
-    return {    
-      wordRegex: atom.config.get 'find-all-words.wordRegex'
-      dataPath:  atom.config.get 'find-all-words.dataPath'
-      gitignore: atom.config.get 'find-all-words.gitignore' 
-      paths, suffixes
-    }
-    
-    # @helper.ready (err) ->
-    #   if err then log 'helper ready err', err; return
-    #   log 'ready'
-    #   @helper.send cmd: 'hello'
-    
-    # @subs = new SubAtom
+  #   
   #   @subs.add atom.commands.add 'atom-workspace', 'find-all-words:open': => @open()
   #   @subs.add atom.commands.add 'atom-workspace', 'core:confirm':  => @submit()
   #   @subs.add atom.commands.add 'atom-workspace', 'core:cancel':   => @close()
