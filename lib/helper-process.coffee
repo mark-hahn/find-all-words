@@ -49,14 +49,22 @@ class HelperProcess
           @checkOneProject projPath
     @removeMarkedFiles()
     @send {cmd: 'scanned', @fileCount, @wordCount}
-      
+
   getFilesForWord: (msg) ->
-    {word, caseSensitive, exactWord} = msg
+    {word, caseSensitive, exactWord, assign, func, none} = msg
     filePaths = {}
     onFileIndexes = (indexes) =>
       for idx in indexes when idx
         filePaths[@filesByIndex[idx].path] = yes
-    @traverseWordTrie word, caseSensitive, exactWord, onFileIndexes
+    if assign and func and none
+      @traverseWordTrie word, caseSensitive, exactWord, 'all', onFileIndexes
+    else
+      if assign
+        @traverseWordTrie word, caseSensitive, exactWord, 'assign', onFileIndexes
+      if func
+        @traverseWordTrie word, caseSensitive, exactWord, 'func', onFileIndexes
+      if none
+        @traverseWordTrie word, caseSensitive, exactWord, 'none', onFileIndexes
     @send {
       cmd:  'filesForWord'
       files: Object.keys filePaths
@@ -113,25 +121,54 @@ class HelperProcess
       catch e
         log 'ERROR parsing word regex, using "[a-zA-Z_\\$]\\w*"', regexStr, e.message
         @regexStr = "[a-zA-Z_\\$]\\w*"
-    words = {}
+    wordsAssign = {}
+    wordsFunc   = {}
+    wordsNone   = {}
     wordRegex = new RegExp @regexStr, 'g'
     while (parts = wordRegex.exec text)
-      words[parts[0]] = yes
-    wordList = Object.keys(words).sort()
+      word = parts[0]
+      if word not of wordsAssign and
+         word not of wordsFunc   and
+         word not of wordsNone
+        idx = wordRegex.lastIndex
+        before = text[0...idx-word.length]
+        after  = text[idx...]
+        eqMatch = (lftRegex, rgtRegex) ->
+          lftRegex.test(before) and rgtRegex.test(after)
+        if /^\s*=/.test(after) or
+           eqMatch( /\{([^,}]*,)*([^,:}]+:)?\s*$/, 
+                    /^\s*(,[^,}]* )*\}\s*=/ ) or
+           eqMatch( /\[([^,\]]*,)*\s*$/,
+                    /^\s*(,[^,\]]*)*\]\s*=/ )
+          wordsEqual[word] = yes
+          continue
+        if /function\s+$/.test before
+          wordsFunc[word] = yes
+          continue
+        wordsNone[word] = yes
+    wordsAssignList = Object.keys(wordsAssign).sort()
+    wordsFuncList   = Object.keys(wordsFunc  ).sort()
+    wordsNoneList   = Object.keys(wordsNone  ).sort()
 
     if not (fileIndex = oldFile?.index)
       for file, idx in @filesByIndex when not file
         break
       fileIndex = idx
-      
-    fileMd5 = crypto.createHash('md5').update(wordList.join ';').digest "hex"
+    allWords = wordsAssignList.join(';') + ';;' +
+               wordsFuncList  .join(';') + ';;' +
+               wordsNoneList  .join(';')
+    fileMd5 = crypto.createHash('md5').update(allWords).digest "hex"
     @filesByPath[filePath] = @filesByIndex[fileIndex] =
       {path:filePath, index:fileIndex, time:fileTime, md5:fileMd5}
     if fileMd5 is oldFile?.md5 then return
     
     if oldFile then @removeFileIndexFromTrie oldFile.index
-    for word in wordList
-      @addWordFileIndexToTrie word, fileIndex
+    for word in wordsAssignList
+      @addWordFileIndexToTrie word, fileIndex, 'as'
+    for word in wordsFuncList
+      @addWordFileIndexToTrie word, fileIndex, 'fu'
+    for word in wordsNoneList
+      @addWordFileIndexToTrie word, fileIndex, 'no'
 
   setAllFileRemoveMarkers: ->
     for file in @filesByIndex when file
@@ -144,15 +181,15 @@ class HelperProcess
       delete @filesByIndex[file.index]
       
   removeFileIndexFromTrie: (fileIndex) ->
-    @traverseWordTrie '', no, no, (fileIndexes) ->
+    @traverseWordTrie '', no, no, 'all', (fileIndexes) ->
       for fileIdx, idx in fileIndexes when fileIdx is fileIndex
         fileIndexes[idx] = 0
         return
   
-  addWordFileIndexToTrie: (word, fileIndex) ->
+  addWordFileIndexToTrie: (word, fileIndex, type) ->
     @wordCount++
     node = @getAddWordNodeFromTrie word
-    fileIndexes = node.no ?= new Int16Array FILE_IDX_INC
+    fileIndexes = node[type] ?= new Int16Array FILE_IDX_INC
     for fileIdx, idx in fileIndexes when fileIdx is 0
       fileIndexes[idx] = fileIndex
       return
@@ -161,7 +198,7 @@ class HelperProcess
     newFileIndexes = new Int16Array newLen
     newFileIndexes[FILE_IDX_INC-1] = fileIndex
     newFileIndexes.set fileIndexes, FILE_IDX_INC
-    node.no = newFileIndexes
+    node[type] = newFileIndexes
   
   getAddWordNodeFromTrie: (word) ->
     node = @wordTrie
@@ -171,12 +208,17 @@ class HelperProcess
         node = lastNode[letter] = {}
     node
     
-  traverseWordTrie: (word, caseSensitive, exactWord, onFileIndexes) ->  
+  traverseWordTrie: (word, caseSensitive, exactWord, type, onFileIndexes) ->  
     visitNode = (node, word) ->
       if not word
-        if node.no then onFileIndexes node.no
+        if node.assign and type in ['all', 'assign']
+          onFileIndexes node.assign
+        if node.func and type in ['all', 'func']
+          onFileIndexes node.func
+        if node.none and type in ['all', 'none']
+          onFileIndexes node.none
         if exactWord then return
-      for letter, childNode of node when letter isnt 'no'
+      for letter, childNode of node when letter.length is 1
         if not word or letter is word[0] or
            not caseSensitive and 
              letter.toLowerCase() is word[0].toLowerCase()

@@ -81,8 +81,8 @@
     };
 
     HelperProcess.prototype.getFilesForWord = function(msg) {
-      var caseSensitive, exactWord, filePaths, onFileIndexes, word;
-      word = msg.word, caseSensitive = msg.caseSensitive, exactWord = msg.exactWord;
+      var assign, caseSensitive, exactWord, filePaths, func, none, onFileIndexes, word;
+      word = msg.word, caseSensitive = msg.caseSensitive, exactWord = msg.exactWord, assign = msg.assign, func = msg.func, none = msg.none;
       filePaths = {};
       onFileIndexes = (function(_this) {
         return function(indexes) {
@@ -97,7 +97,19 @@
           return results;
         };
       })(this);
-      this.traverseWordTrie(word, caseSensitive, exactWord, onFileIndexes);
+      if (assign && func && none) {
+        this.traverseWordTrie(word, caseSensitive, exactWord, 'all', onFileIndexes);
+      } else {
+        if (assign) {
+          this.traverseWordTrie(word, caseSensitive, exactWord, 'assign', onFileIndexes);
+        }
+        if (func) {
+          this.traverseWordTrie(word, caseSensitive, exactWord, 'func', onFileIndexes);
+        }
+        if (none) {
+          this.traverseWordTrie(word, caseSensitive, exactWord, 'none', onFileIndexes);
+        }
+      }
       return this.send({
         cmd: 'filesForWord',
         files: Object.keys(filePaths),
@@ -141,7 +153,7 @@
     };
 
     HelperProcess.prototype.checkOneFile = function(filePath) {
-      var e, file, fileIndex, fileMd5, fileTime, i, idx, j, len, len1, oldFile, parts, ref, results, stats, text, word, wordList, wordRegex, words;
+      var after, allWords, before, e, eqMatch, file, fileIndex, fileMd5, fileTime, i, idx, j, k, l, len, len1, len2, len3, oldFile, parts, ref, results, stats, text, word, wordRegex, wordsAssign, wordsAssignList, wordsFunc, wordsFuncList, wordsNone, wordsNoneList;
       this.fileCount++;
       try {
         stats = fs.statSync(filePath);
@@ -177,12 +189,33 @@
           this.regexStr = "[a-zA-Z_\\$]\\w*";
         }
       }
-      words = {};
+      wordsAssign = {};
+      wordsFunc = {};
+      wordsNone = {};
       wordRegex = new RegExp(this.regexStr, 'g');
       while ((parts = wordRegex.exec(text))) {
-        words[parts[0]] = true;
+        word = parts[0];
+        if (!(word in wordsAssign) && !(word in wordsFunc) && !(word in wordsNone)) {
+          idx = wordRegex.lastIndex;
+          before = text.slice(0, idx - word.length);
+          after = text.slice(idx);
+          eqMatch = function(lftRegex, rgtRegex) {
+            return lftRegex.test(before) && rgtRegex.test(after);
+          };
+          if (/^\s*=/.test(after) || eqMatch(/\{([^,}]*,)*([^,:}]+:)?\s*$/, /^\s*(,[^,}]* )*\}\s*=/) || eqMatch(/\[([^,\]]*,)*\s*$/, /^\s*(,[^,\]]*)*\]\s*=/)) {
+            wordsEqual[word] = true;
+            continue;
+          }
+          if (/function\s+$/.test(before)) {
+            wordsFunc[word] = true;
+            continue;
+          }
+          wordsNone[word] = true;
+        }
       }
-      wordList = Object.keys(words).sort();
+      wordsAssignList = Object.keys(wordsAssign).sort();
+      wordsFuncList = Object.keys(wordsFunc).sort();
+      wordsNoneList = Object.keys(wordsNone).sort();
       if (!(fileIndex = oldFile != null ? oldFile.index : void 0)) {
         ref = this.filesByIndex;
         for (idx = i = 0, len = ref.length; i < len; idx = ++i) {
@@ -193,7 +226,8 @@
         }
         fileIndex = idx;
       }
-      fileMd5 = crypto.createHash('md5').update(wordList.join(';')).digest("hex");
+      allWords = wordsAssignList.join(';') + ';;' + wordsFuncList.join(';') + ';;' + wordsNoneList.join(';');
+      fileMd5 = crypto.createHash('md5').update(allWords).digest("hex");
       this.filesByPath[filePath] = this.filesByIndex[fileIndex] = {
         path: filePath,
         index: fileIndex,
@@ -206,10 +240,18 @@
       if (oldFile) {
         this.removeFileIndexFromTrie(oldFile.index);
       }
+      for (j = 0, len1 = wordsAssignList.length; j < len1; j++) {
+        word = wordsAssignList[j];
+        this.addWordFileIndexToTrie(word, fileIndex, 'as');
+      }
+      for (k = 0, len2 = wordsFuncList.length; k < len2; k++) {
+        word = wordsFuncList[k];
+        this.addWordFileIndexToTrie(word, fileIndex, 'fu');
+      }
       results = [];
-      for (j = 0, len1 = wordList.length; j < len1; j++) {
-        word = wordList[j];
-        results.push(this.addWordFileIndexToTrie(word, fileIndex));
+      for (l = 0, len3 = wordsNoneList.length; l < len3; l++) {
+        word = wordsNoneList[l];
+        results.push(this.addWordFileIndexToTrie(word, fileIndex, 'no'));
       }
       return results;
     };
@@ -244,7 +286,7 @@
     };
 
     HelperProcess.prototype.removeFileIndexFromTrie = function(fileIndex) {
-      return this.traverseWordTrie('', false, false, function(fileIndexes) {
+      return this.traverseWordTrie('', false, false, 'all', function(fileIndexes) {
         var fileIdx, i, idx, len;
         for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
           fileIdx = fileIndexes[idx];
@@ -257,11 +299,11 @@
       });
     };
 
-    HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex) {
+    HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex, type) {
       var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
       this.wordCount++;
       node = this.getAddWordNodeFromTrie(word);
-      fileIndexes = node.no != null ? node.no : node.no = new Int16Array(FILE_IDX_INC);
+      fileIndexes = node[type] != null ? node[type] : node[type] = new Int16Array(FILE_IDX_INC);
       for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
         fileIdx = fileIndexes[idx];
         if (!(fileIdx === 0)) {
@@ -275,7 +317,7 @@
       newFileIndexes = new Int16Array(newLen);
       newFileIndexes[FILE_IDX_INC - 1] = fileIndex;
       newFileIndexes.set(fileIndexes, FILE_IDX_INC);
-      return node.no = newFileIndexes;
+      return node[type] = newFileIndexes;
     };
 
     HelperProcess.prototype.getAddWordNodeFromTrie = function(word) {
@@ -291,13 +333,19 @@
       return node;
     };
 
-    HelperProcess.prototype.traverseWordTrie = function(word, caseSensitive, exactWord, onFileIndexes) {
+    HelperProcess.prototype.traverseWordTrie = function(word, caseSensitive, exactWord, type, onFileIndexes) {
       var visitNode;
       visitNode = function(node, word) {
         var childNode, letter, results;
         if (!word) {
-          if (node.no) {
-            onFileIndexes(node.no);
+          if (node.assign && (type === 'all' || type === 'assign')) {
+            onFileIndexes(node.assign);
+          }
+          if (node.func && (type === 'all' || type === 'func')) {
+            onFileIndexes(node.func);
+          }
+          if (node.none && (type === 'all' || type === 'none')) {
+            onFileIndexes(node.none);
           }
           if (exactWord) {
             return;
@@ -306,7 +354,7 @@
         results = [];
         for (letter in node) {
           childNode = node[letter];
-          if (letter !== 'no') {
+          if (letter.length === 1) {
             if (!word || letter === word[0] || !caseSensitive && letter.toLowerCase() === word[0].toLowerCase()) {
               results.push(visitNode(childNode, word.slice(1)));
             } else {
