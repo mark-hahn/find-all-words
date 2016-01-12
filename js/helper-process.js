@@ -41,45 +41,13 @@
 
     HelperProcess.prototype.init = function(opts) {
       this.opts = opts;
-      this.filesByPath = {};
-      this.filesByIndex = [];
-      this.wordTrie = {};
+      this.loadAllData();
       return this.scanAll();
     };
 
     HelperProcess.prototype.updateOpts = function(opts) {
       this.opts = opts;
-      this.regexStr = null;
       return this.scanAll();
-    };
-
-    HelperProcess.prototype.scanAll = function() {
-      var i, j, len, len1, optPath, projPath, ref, ref1;
-      this.fileCount = 0;
-      this.wordCount = 0;
-      this.setAllFileRemoveMarkers();
-      ref = this.opts.paths;
-      for (i = 0, len = ref.length; i < len; i++) {
-        optPath = ref[i];
-        log('optPath', optPath);
-        if (this.checkOneProject(optPath)) {
-          continue;
-        }
-        ref1 = fs.listSync(optPath);
-        for (j = 0, len1 = ref1.length; j < len1; j++) {
-          projPath = ref1[j];
-          if (fs.isDirectorySync(projPath)) {
-            this.checkOneProject(projPath);
-          }
-        }
-      }
-      this.removeMarkedFiles();
-      this.saveAllData();
-      return this.send({
-        cmd: 'scanned',
-        fileCount: this.fileCount,
-        wordCount: this.wordCount
-      });
     };
 
     HelperProcess.prototype.getFilesForWord = function(msg) {
@@ -88,10 +56,10 @@
       filePaths = {};
       onFileIndexes = (function(_this) {
         return function(indexes) {
-          var i, idx, len, results;
+          var idx, j, len, results;
           results = [];
-          for (i = 0, len = indexes.length; i < len; i++) {
-            idx = indexes[i];
+          for (j = 0, len = indexes.length; j < len; j++) {
+            idx = indexes[j];
             if (idx) {
               results.push(filePaths[_this.filesByIndex[idx].path] = true);
             }
@@ -120,7 +88,41 @@
       });
     };
 
-    HelperProcess.prototype.checkOneProject = function(projPath) {
+    HelperProcess.prototype.scanAll = function() {
+      var j, k, len, len1, optPath, projPath, ref, ref1;
+      this.filesChecked = this.indexesAdded = this.timeMismatchCount = this.md5MismatchCount = this.removedCount = this.changeCount = 0;
+      this.setAllFileRemoveMarkers();
+      ref = this.opts.paths;
+      for (j = 0, len = ref.length; j < len; j++) {
+        optPath = ref[j];
+        log('scanning', optPath);
+        if (this.scanProject(optPath)) {
+          continue;
+        }
+        ref1 = fs.listSync(optPath);
+        for (k = 0, len1 = ref1.length; k < len1; k++) {
+          projPath = ref1[k];
+          if (fs.isDirectorySync(projPath)) {
+            this.scanProject(projPath);
+          }
+        }
+      }
+      this.removeMarkedFiles();
+      if (this.changeCount) {
+        this.saveAllData();
+      }
+      return this.send({
+        cmd: 'scanned',
+        indexesAdded: this.indexesAdded,
+        filesChecked: this.filesChecked,
+        timeMismatchCount: this.timeMismatchCount,
+        md5MismatchCount: this.md5MismatchCount,
+        removedCount: this.removedCount,
+        changeCount: this.changeCount
+      });
+    };
+
+    HelperProcess.prototype.scanProject = function(projPath) {
       var e, giPath, gitignore, gitignoreTxt, onDir, onFile;
       if (this.opts.gitignore && !fs.isDirectorySync(path.join(projPath, '.git'))) {
         return false;
@@ -145,7 +147,7 @@
           var sfx;
           sfx = path.extname(filePath).toLowerCase();
           if (((sfx === '' && _this.opts.suffixes.empty) || (sfx === '.' && _this.opts.suffixes.dot) || _this.opts.suffixes[sfx]) && (!gitignore || gitignore.accepts(path.basename(filePath)))) {
-            return _this.checkOneFile(filePath);
+            return _this.checkFile(filePath);
           }
         };
       })(this);
@@ -153,9 +155,9 @@
       return true;
     };
 
-    HelperProcess.prototype.checkOneFile = function(filePath) {
-      var after, allWords, before, e, file, fileIndex, fileMd5, fileTime, i, idx, j, k, len, len1, len2, oldFile, parts, ref, results, stats, text, word, wordRegex, wordsAssign, wordsAssignList, wordsNone, wordsNoneList;
-      this.fileCount++;
+    HelperProcess.prototype.checkFile = function(filePath) {
+      var after, allWords, before, e, file, fileIndex, fileMd5, fileTime, idx, j, k, l, len, len1, len2, oldFile, parts, ref, results, stats, text, word, wordRegex, wordsAssign, wordsAssignList, wordsNone, wordsNoneList;
+      this.filesChecked++;
       try {
         stats = fs.statSync(filePath);
       } catch (_error) {
@@ -173,6 +175,7 @@
       if (fileTime === (oldFile != null ? oldFile.time : void 0)) {
         return;
       }
+      this.timeMismatchCount++;
       try {
         text = fs.readFileSync(filePath);
       } catch (_error) {
@@ -203,7 +206,7 @@
       fileMd5 = crypto.createHash('md5').update(allWords).digest("hex");
       if (!(fileIndex = oldFile != null ? oldFile.index : void 0)) {
         ref = this.filesByIndex;
-        for (idx = i = 0, len = ref.length; i < len; idx = ++i) {
+        for (idx = j = 0, len = ref.length; j < len; idx = ++j) {
           file = ref[idx];
           if (!file) {
             break;
@@ -220,27 +223,29 @@
       if (fileMd5 === (oldFile != null ? oldFile.md5 : void 0)) {
         return;
       }
+      this.md5MismatchCount++;
+      this.changeCount++;
       if (oldFile) {
         this.removeFileIndexFromTrie(oldFile.index);
       }
-      for (j = 0, len1 = wordsAssignList.length; j < len1; j++) {
-        word = wordsAssignList[j];
+      for (k = 0, len1 = wordsAssignList.length; k < len1; k++) {
+        word = wordsAssignList[k];
         this.addWordFileIndexToTrie(word, fileIndex, 'as');
       }
       results = [];
-      for (k = 0, len2 = wordsNoneList.length; k < len2; k++) {
-        word = wordsNoneList[k];
+      for (l = 0, len2 = wordsNoneList.length; l < len2; l++) {
+        word = wordsNoneList[l];
         results.push(this.addWordFileIndexToTrie(word, fileIndex, 'no'));
       }
       return results;
     };
 
     HelperProcess.prototype.setAllFileRemoveMarkers = function() {
-      var file, i, len, ref, results;
+      var file, j, len, ref, results;
       ref = this.filesByIndex;
       results = [];
-      for (i = 0, len = ref.length; i < len; i++) {
-        file = ref[i];
+      for (j = 0, len = ref.length; j < len; j++) {
+        file = ref[j];
         if (file) {
           results.push(file.remove = true);
         }
@@ -249,14 +254,16 @@
     };
 
     HelperProcess.prototype.removeMarkedFiles = function() {
-      var file, i, len, ref, results;
+      var file, j, len, ref, results;
       ref = this.filesByIndex;
       results = [];
-      for (i = 0, len = ref.length; i < len; i++) {
-        file = ref[i];
+      for (j = 0, len = ref.length; j < len; j++) {
+        file = ref[j];
         if (!(file != null ? file.remove : void 0)) {
           continue;
         }
+        this.removedCount++;
+        this.changeCount++;
         this.removeFileIndexFromTrie(file.index);
         delete this.filesByPath[file.path];
         results.push(delete this.filesByIndex[file.index]);
@@ -266,8 +273,8 @@
 
     HelperProcess.prototype.removeFileIndexFromTrie = function(fileIndex) {
       return this.traverseWordTrie('', false, false, 'all', function(fileIndexes) {
-        var fileIdx, i, idx, len;
-        for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
+        var fileIdx, idx, j, len;
+        for (idx = j = 0, len = fileIndexes.length; j < len; idx = ++j) {
           fileIdx = fileIndexes[idx];
           if (!(fileIdx === fileIndex)) {
             continue;
@@ -279,11 +286,11 @@
     };
 
     HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex, type) {
-      var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
-      this.wordCount++;
+      var fileIdx, fileIndexes, idx, j, len, newFileIndexes, newLen, node, oldLen;
+      this.indexesAdded++;
       node = this.getAddWordNodeFromTrie(word);
       fileIndexes = node[type] != null ? node[type] : node[type] = new Int16Array(FILE_IDX_INC);
-      for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
+      for (idx = j = 0, len = fileIndexes.length; j < len; idx = ++j) {
         fileIdx = fileIndexes[idx];
         if (!(fileIdx === 0)) {
           continue;
@@ -300,10 +307,10 @@
     };
 
     HelperProcess.prototype.getAddWordNodeFromTrie = function(word) {
-      var i, lastNode, len, letter, node;
+      var j, lastNode, len, letter, node;
       node = this.wordTrie;
-      for (i = 0, len = word.length; i < len; i++) {
-        letter = word[i];
+      for (j = 0, len = word.length; j < len; j++) {
+        letter = word[j];
         lastNode = node;
         if (!(node = node[letter])) {
           node = lastNode[letter] = {};
@@ -357,7 +364,6 @@
         buf.write(json, 4);
         return fs.writeSync(fd, buf, 0, buf.length);
       };
-      writeJson(this.opts);
       writeJson(this.filesByIndex);
       this.traverseWordTrie('', false, false, 'all', function(fileIndexes, word, type) {
         var buf, bufIdx, hdr, hdrLen;
@@ -378,7 +384,53 @@
       return fs.moveSync(tmpPath, this.opts.dataPath);
     };
 
-    HelperProcess.prototype.loadAllData = function() {};
+    HelperProcess.prototype.loadAllData = function() {
+      var buf, e, fd, file, fileIndexes, hdr, hdrLen, i, idxLen, j, jsonLen, k, len, readLen, ref, ref1, ref2, type, word;
+      log('loading ...');
+      this.filesByIndex = [];
+      this.filesByPath = {};
+      this.wordTrie = {};
+      try {
+        fd = fs.openSync(this.opts.dataPath, 'r');
+      } catch (_error) {
+        e = _error;
+        return;
+      }
+      readLen = function() {
+        var buf, bytesRead;
+        buf = new Buffer(4);
+        bytesRead = fs.readSync(fd, buf, 0, 4);
+        if (!bytesRead) {
+          return 0;
+        } else {
+          return buf.readInt32BE(0);
+        }
+      };
+      jsonLen = readLen();
+      buf = new Buffer(jsonLen);
+      fs.readSync(fd, buf, 0, jsonLen);
+      this.filesByIndex = JSON.parse(buf.toString());
+      ref = this.filesByIndex;
+      for (j = 0, len = ref.length; j < len; j++) {
+        file = ref[j];
+        this.filesByPath[file.path] = file;
+      }
+      while ((hdrLen = readLen())) {
+        buf = new Buffer(hdrLen);
+        fs.readSync(fd, buf, 0, hdrLen);
+        hdr = buf.toString();
+        ref1 = hdr.split(';'), word = ref1[0], type = ref1[1];
+        idxLen = readLen();
+        buf = new Buffer(idxLen);
+        fs.readSync(fd, buf, 0, idxLen);
+        fileIndexes = new Int16Array(idxLen / 4);
+        for (i = k = 0, ref2 = idxLen / 4; 0 <= ref2 ? k < ref2 : k > ref2; i = 0 <= ref2 ? ++k : --k) {
+          fileIndexes[i] = buf.readInt16BE(i * 4, true);
+        }
+        this.addWordFileIndexToTrie(word, fileIndexes, type);
+      }
+      return log('loaded', this.filesByIndex.length, Object.keys(this.wordTrie).length);
+    };
 
     HelperProcess.prototype.destroy = function() {};
 

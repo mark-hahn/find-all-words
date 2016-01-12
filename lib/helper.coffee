@@ -17,8 +17,6 @@ class Helper
       for line in data.toString().split '\n' when line then procLog line
     @child.stderr.on 'data',     (data) ->
       procLog 'STDERR ...\n', data.toString()
-      
-    log 'loading words 2'
     @send 'init', initOpts
 
   send: (cmd, data) -> @child.send Object.assign {cmd}, data

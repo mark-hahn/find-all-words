@@ -16,41 +16,12 @@ class HelperProcess
   send: (msg) -> process.send msg
   
   init: (@opts) ->
-    @filesByPath  = {}
-    @filesByIndex = []
-    @wordTrie     = {}
-    
-    # try
-    #   file = fs.openSync dataPath, 'r'
-    # catch e
-    #   if e.code isnt 'ENOENT'
-    #     log msg = ['data file open error at', dataPath, 'Code:', e.code].join ' '
-    #     @send {cmd: 'FATAL', msg}
-    #     setTimeout (-> process.exit 1), 1000
-    #     return
-    #   log 'warning: missing data file, creating new file at', dataPath
-      
-    # log '@opts', @opts
+    @loadAllData()
     @scanAll()
     
   updateOpts: (@opts) -> 
-    @regexStr = null
     @scanAll()
   
-  scanAll: ->
-    @fileCount = 0
-    @wordCount = 0
-    @setAllFileRemoveMarkers()
-    for optPath in @opts.paths
-      log 'optPath', optPath
-      if @checkOneProject optPath then continue
-      for projPath in fs.listSync optPath
-        if fs.isDirectorySync projPath
-          @checkOneProject projPath
-    @removeMarkedFiles()
-    @saveAllData()
-    @send {cmd: 'scanned', @fileCount, @wordCount}
-
   getFilesForWord: (msg) ->
     {word, caseSensitive, exactWord, assign, none} = msg
     filePaths = {}
@@ -72,7 +43,28 @@ class HelperProcess
       word, caseSensitive, exactWord, assign, none
     }
 
-  checkOneProject: (projPath) ->
+  scanAll: ->
+    @filesChecked = @indexesAdded = 
+      @timeMismatchCount = @md5MismatchCount =
+      @removedCount = @changeCount = 0
+    @setAllFileRemoveMarkers()
+    for optPath in @opts.paths
+      log 'scanning', optPath
+      if @scanProject optPath then continue
+      for projPath in fs.listSync optPath
+        if fs.isDirectorySync projPath
+          @scanProject projPath
+    @removeMarkedFiles()
+    if @changeCount
+      @saveAllData()
+    @send {cmd: 'scanned', 
+             @indexesAdded, @filesChecked, \
+             @timeMismatchCount, @md5MismatchCount, 
+             @removedCount, @changeCount }
+
+################## PRIVATE ##################
+
+  scanProject: (projPath) ->
     if @opts.gitignore and
        not fs.isDirectorySync path.join projPath, '.git'
       return no
@@ -91,12 +83,12 @@ class HelperProcess
           (sfx is '.' and @opts.suffixes.dot)   or 
                           @opts.suffixes[sfx] ) and 
          (not gitignore or gitignore.accepts path.basename filePath)
-        @checkOneFile filePath
+        @checkFile filePath
     fs.traverseTreeSync projPath, onFile, onDir
     yes
   
-  checkOneFile: (filePath) ->
-    @fileCount++
+  checkFile: (filePath) ->
+    @filesChecked++
     try
       stats = fs.statSync filePath
     catch e
@@ -104,12 +96,16 @@ class HelperProcess
       return
     if not stats.isFile() then return
     
+    # log 'oldFile', filePath, stats.mtime, Object.keys(@filesByPath).length
+    
     if (oldFile = @filesByPath[filePath])
       delete oldFile.remove
       
     fileTime = stats.mtime.getTime()
     if fileTime is oldFile?.time then return
-
+    
+    @timeMismatchCount++ 
+    
     try
       text = fs.readFileSync filePath
     catch e
@@ -152,6 +148,9 @@ class HelperProcess
       {path:filePath, index:fileIndex, time:fileTime, md5:fileMd5}
     if fileMd5 is oldFile?.md5 then return
     
+    @md5MismatchCount++
+    @changeCount++
+    
     if oldFile then @removeFileIndexFromTrie oldFile.index
     for word in wordsAssignList
       @addWordFileIndexToTrie word, fileIndex, 'as'
@@ -164,6 +163,8 @@ class HelperProcess
 
   removeMarkedFiles: ->
     for file in @filesByIndex when file?.remove
+      @removedCount++
+      @changeCount++
       @removeFileIndexFromTrie file.index
       delete @filesByPath[file.path]
       delete @filesByIndex[file.index]
@@ -177,7 +178,7 @@ class HelperProcess
   addWordFileIndexToTrie: (word, fileIndex, type) ->
     # if word is 'asdf'
       # log 'addWordFileIndexToTrie', word, fileIndex, type
-    @wordCount++
+    @indexesAdded++
     node = @getAddWordNodeFromTrie word
     fileIndexes = node[type] ?= new Int16Array FILE_IDX_INC
     for fileIdx, idx in fileIndexes when fileIdx is 0
@@ -217,7 +218,6 @@ class HelperProcess
   
   saveAllData: ->
     log 'saveAllData start'
-    
     tmpPath = @opts.dataPath + '.tmp'
     fd = fs.openSync tmpPath, 'w'
     writeJson = (obj) ->
@@ -227,7 +227,6 @@ class HelperProcess
       buf.writeInt32BE jsonLen, 0
       buf.write json, 4
       fs.writeSync fd, buf, 0, buf.length
-    writeJson @opts
     writeJson @filesByIndex
     @traverseWordTrie '', no, no, 'all', (fileIndexes, word, type) ->
       hdr    = word + ';' + type
@@ -246,7 +245,39 @@ class HelperProcess
     fs.moveSync tmpPath, @opts.dataPath
     
   loadAllData: ->
-    
+    log 'loading ...'
+    @filesByIndex = []
+    @filesByPath  = {}
+    @wordTrie     = {}
+    try
+      fd = fs.openSync @opts.dataPath, 'r'
+    catch e
+      return
+    readLen = ->
+      buf = new Buffer 4
+      bytesRead = fs.readSync fd, buf, 0, 4
+      if not bytesRead then 0
+      else buf.readInt32BE 0
+    jsonLen = readLen()
+    buf = new Buffer jsonLen
+    fs.readSync fd, buf, 0, jsonLen
+    @filesByIndex = JSON.parse buf.toString()
+    for file in @filesByIndex
+      @filesByPath[file.path] = file
+    while (hdrLen = readLen())
+      buf = new Buffer hdrLen
+      fs.readSync fd, buf, 0, hdrLen
+      hdr = buf.toString()
+      [word,type] = hdr.split ';'
+      idxLen = readLen()
+      buf = new Buffer idxLen
+      fs.readSync fd, buf, 0, idxLen
+      fileIndexes = new Int16Array idxLen/4
+      for i in [0...idxLen/4]
+        fileIndexes[i] = buf.readInt16BE i*4, true
+      @addWordFileIndexToTrie word, fileIndexes, type
+      
+    log 'loaded', @filesByIndex.length, Object.keys(@wordTrie).length
       
   destroy: -> 
     
