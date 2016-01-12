@@ -16,8 +16,6 @@ class HelperProcess
   send: (msg) -> process.send msg
   
   init: (@opts) ->
-    @fileCount = 0
-    @wordCount = 0
     @filesByPath  = {}
     @filesByIndex = []
     @wordTrie     = {}
@@ -34,12 +32,24 @@ class HelperProcess
     #   log 'warning: missing data file, creating new file at', dataPath
       
     # log '@opts', @opts
-    @checkAllProjects()
+    @scanAll()
     
   updateOpts: (@opts) -> 
     @regexStr = null
-    @checkAllProjects()
+    @scanAll()
   
+  scanAll: ->
+    @fileCount = 0
+    @wordCount = 0
+    @setAllFileRemoveMarkers()
+    for optPath in @opts.paths
+      if @checkOneProject optPath then continue
+      for projPath in fs.listSync optPath
+        if fs.isDirectorySync projPath
+          @checkOneProject projPath
+    @removeMarkedFiles()
+    @send {cmd: 'scanned', @fileCount, @wordCount}
+      
   getFilesForWord: (msg) ->
     {word, caseSensitive, exactWord} = msg
     filePaths = {}
@@ -53,16 +63,6 @@ class HelperProcess
       word, caseSensitive, exactWord
     }
   
-  checkAllProjects: ->
-    @setAllFileRemoveMarkers()
-    for optPath in @opts.paths
-      if @checkOneProject optPath then continue
-      for projPath in fs.listSync optPath
-        if fs.isDirectorySync projPath
-          @checkOneProject projPath
-    @removeMarkedFiles()
-    @send {cmd: 'ready', @fileCount, @wordCount}
-      
   checkOneProject: (projPath) ->
     if @opts.gitignore and
        not fs.isDirectorySync path.join projPath, '.git'
@@ -70,20 +70,18 @@ class HelperProcess
     gitignore = @opts.gitignore and
       try
         giPath = path.join projPath, '.gitignore'
-        gitParser.compile fs.readFileSync giPath, 'utf8'
+        gitignoreTxt = fs.readFileSync giPath, 'utf8'
+        gitParser.compile gitignoreTxt + '\n.git\n'
       catch e
         null
     onDir = (dirPath) => 
-      dir = path.basename dirPath
-      (dir isnt '.git' and
-        (not gitignore or gitignore.accepts dir))
+      (not gitignore or gitignore.accepts path.basename dirPath)
     onFile = (filePath) =>
-      filePath = filePath.toLowerCase()
-      base = path.basename filePath
-      sfx  = path.extname  filePath
+      sfx  = path.extname(filePath).toLowerCase()
       if ((sfx is  '' and @opts.suffixes.empty) or
-          (sfx is '.' and @opts.suffixes.dot) or @opts.suffixes[sfx]) and 
-         (not gitignore or gitignore.accepts base)
+          (sfx is '.' and @opts.suffixes.dot)   or 
+                          @opts.suffixes[sfx] ) and 
+         (not gitignore or gitignore.accepts path.basename filePath)
         @checkOneFile filePath
     fs.traverseTreeSync projPath, onFile, onDir
     yes
@@ -154,7 +152,7 @@ class HelperProcess
   addWordFileIndexToTrie: (word, fileIndex) ->
     @wordCount++
     node = @getAddWordNodeFromTrie word
-    fileIndexes = node.fi ?= new Int16Array FILE_IDX_INC
+    fileIndexes = node.no ?= new Int16Array FILE_IDX_INC
     for fileIdx, idx in fileIndexes when fileIdx is 0
       fileIndexes[idx] = fileIndex
       return
@@ -163,7 +161,7 @@ class HelperProcess
     newFileIndexes = new Int16Array newLen
     newFileIndexes[FILE_IDX_INC-1] = fileIndex
     newFileIndexes.set fileIndexes, FILE_IDX_INC
-    node.fi = newFileIndexes
+    node.no = newFileIndexes
   
   getAddWordNodeFromTrie: (word) ->
     node = @wordTrie
@@ -176,9 +174,9 @@ class HelperProcess
   traverseWordTrie: (word, caseSensitive, exactWord, onFileIndexes) ->  
     visitNode = (node, word) ->
       if not word
-        if node.fi then onFileIndexes node.fi
+        if node.no then onFileIndexes node.no
         if exactWord then return
-      for letter, childNode of node when letter isnt 'fi'
+      for letter, childNode of node when letter isnt 'no'
         if not word or letter is word[0] or
            not caseSensitive and 
              letter.toLowerCase() is word[0].toLowerCase()

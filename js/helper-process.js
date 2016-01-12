@@ -41,18 +41,43 @@
 
     HelperProcess.prototype.init = function(opts) {
       this.opts = opts;
-      this.fileCount = 0;
-      this.wordCount = 0;
       this.filesByPath = {};
       this.filesByIndex = [];
       this.wordTrie = {};
-      return this.checkAllProjects();
+      return this.scanAll();
     };
 
     HelperProcess.prototype.updateOpts = function(opts) {
       this.opts = opts;
       this.regexStr = null;
-      return this.checkAllProjects();
+      return this.scanAll();
+    };
+
+    HelperProcess.prototype.scanAll = function() {
+      var i, j, len, len1, optPath, projPath, ref, ref1;
+      this.fileCount = 0;
+      this.wordCount = 0;
+      this.setAllFileRemoveMarkers();
+      ref = this.opts.paths;
+      for (i = 0, len = ref.length; i < len; i++) {
+        optPath = ref[i];
+        if (this.checkOneProject(optPath)) {
+          continue;
+        }
+        ref1 = fs.listSync(optPath);
+        for (j = 0, len1 = ref1.length; j < len1; j++) {
+          projPath = ref1[j];
+          if (fs.isDirectorySync(projPath)) {
+            this.checkOneProject(projPath);
+          }
+        }
+      }
+      this.removeMarkedFiles();
+      return this.send({
+        cmd: 'scanned',
+        fileCount: this.fileCount,
+        wordCount: this.wordCount
+      });
     };
 
     HelperProcess.prototype.getFilesForWord = function(msg) {
@@ -82,40 +107,16 @@
       });
     };
 
-    HelperProcess.prototype.checkAllProjects = function() {
-      var i, j, len, len1, optPath, projPath, ref, ref1;
-      this.setAllFileRemoveMarkers();
-      ref = this.opts.paths;
-      for (i = 0, len = ref.length; i < len; i++) {
-        optPath = ref[i];
-        if (this.checkOneProject(optPath)) {
-          continue;
-        }
-        ref1 = fs.listSync(optPath);
-        for (j = 0, len1 = ref1.length; j < len1; j++) {
-          projPath = ref1[j];
-          if (fs.isDirectorySync(projPath)) {
-            this.checkOneProject(projPath);
-          }
-        }
-      }
-      this.removeMarkedFiles();
-      return this.send({
-        cmd: 'ready',
-        fileCount: this.fileCount,
-        wordCount: this.wordCount
-      });
-    };
-
     HelperProcess.prototype.checkOneProject = function(projPath) {
-      var e, giPath, gitignore, onDir, onFile;
+      var e, giPath, gitignore, gitignoreTxt, onDir, onFile;
       if (this.opts.gitignore && !fs.isDirectorySync(path.join(projPath, '.git'))) {
         return false;
       }
       gitignore = this.opts.gitignore && (function() {
         try {
           giPath = path.join(projPath, '.gitignore');
-          return gitParser.compile(fs.readFileSync(giPath, 'utf8'));
+          gitignoreTxt = fs.readFileSync(giPath, 'utf8');
+          return gitParser.compile(gitignoreTxt + '\n.git\n');
         } catch (_error) {
           e = _error;
           return null;
@@ -123,18 +124,14 @@
       })();
       onDir = (function(_this) {
         return function(dirPath) {
-          var dir;
-          dir = path.basename(dirPath);
-          return dir !== '.git' && (!gitignore || gitignore.accepts(dir));
+          return !gitignore || gitignore.accepts(path.basename(dirPath));
         };
       })(this);
       onFile = (function(_this) {
         return function(filePath) {
-          var base, sfx;
-          filePath = filePath.toLowerCase();
-          base = path.basename(filePath);
-          sfx = path.extname(filePath);
-          if (((sfx === '' && _this.opts.suffixes.empty) || (sfx === '.' && _this.opts.suffixes.dot) || _this.opts.suffixes[sfx]) && (!gitignore || gitignore.accepts(base))) {
+          var sfx;
+          sfx = path.extname(filePath).toLowerCase();
+          if (((sfx === '' && _this.opts.suffixes.empty) || (sfx === '.' && _this.opts.suffixes.dot) || _this.opts.suffixes[sfx]) && (!gitignore || gitignore.accepts(path.basename(filePath)))) {
             return _this.checkOneFile(filePath);
           }
         };
@@ -264,7 +261,7 @@
       var fileIdx, fileIndexes, i, idx, len, newFileIndexes, newLen, node, oldLen;
       this.wordCount++;
       node = this.getAddWordNodeFromTrie(word);
-      fileIndexes = node.fi != null ? node.fi : node.fi = new Int16Array(FILE_IDX_INC);
+      fileIndexes = node.no != null ? node.no : node.no = new Int16Array(FILE_IDX_INC);
       for (idx = i = 0, len = fileIndexes.length; i < len; idx = ++i) {
         fileIdx = fileIndexes[idx];
         if (!(fileIdx === 0)) {
@@ -278,7 +275,7 @@
       newFileIndexes = new Int16Array(newLen);
       newFileIndexes[FILE_IDX_INC - 1] = fileIndex;
       newFileIndexes.set(fileIndexes, FILE_IDX_INC);
-      return node.fi = newFileIndexes;
+      return node.no = newFileIndexes;
     };
 
     HelperProcess.prototype.getAddWordNodeFromTrie = function(word) {
@@ -299,8 +296,8 @@
       visitNode = function(node, word) {
         var childNode, letter, results;
         if (!word) {
-          if (node.fi) {
-            onFileIndexes(node.fi);
+          if (node.no) {
+            onFileIndexes(node.no);
           }
           if (exactWord) {
             return;
@@ -309,7 +306,7 @@
         results = [];
         for (letter in node) {
           childNode = node[letter];
-          if (letter !== 'fi') {
+          if (letter !== 'no') {
             if (!word || letter === word[0] || !caseSensitive && letter.toLowerCase() === word[0].toLowerCase()) {
               results.push(visitNode(childNode, word.slice(1)));
             } else {

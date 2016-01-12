@@ -23,9 +23,10 @@ class Helper
 
   send: (cmd, data) -> @child.send Object.assign {cmd}, data
   
-  ready: (msg) ->
-    log 'ready', msg
-    @send 'getFilesForWord', word: 'a', caseSensitive: no, exactWord: no
+  scanned: (msg) ->
+    log 'scanned', msg
+    @send 'getFilesForWord', word: 'helperPath', \
+              caseSensitive: yes, exactWord: yes, assign:yes
     
   filesForWord: (msg) ->
     log 'filesForWord', msg
