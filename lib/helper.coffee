@@ -17,15 +17,17 @@ module.exports =
 class Helper
   
   constructor: (@initOpts) ->
+    log 'node version', process.version
+    @pipeErrorCount = 0
     @debug = 
       if atom.project.getPaths()[0] is '/root/.atom/packages/find-all-words' then 'debug'
       else ''
     if @debug
-      log 'Warning: killing helper process, this should only happen when debugging'
+      log 'Warning: killing helper process (only when debugging)'
       childProcess.execSync \
         'kill $(pgrep -f "find-all-words/js/helper-process.js")' +
          ' 2> /dev/null' 
-    @createdServer = no
+    @spawnedProcess = no
     @connectToPipeServer()
     
   connectToPipeServer: ->
@@ -33,7 +35,7 @@ class Helper
       log 'connected to helper process'
       @pipe.setNoDelay()
       @pipe.unref()
-      @initOpts.newProcess = @createdServer
+      @initOpts.newProcess = @spawnedProcess
       @send 'init', @initOpts
         
     @pipe.on 'data', (buf) => 
@@ -44,27 +46,30 @@ class Helper
     @pipe.on 'error', (e) => 
       @pipe.destroy()
       @pipe = null
-      if not @createdServer and e.code in ['ENOENT', 'ECONNREFUSED']
-        @forkPipeServer()
+      if not @spawnedProcess and e.code in ['ENOENT', 'ECONNREFUSED']
+        log 'unable to connect to existing helper process:', e.code
+        @spawnHelperProcess()
         return
-      log 'pipe error:', @createdServer, e.code, pipePath
-      
-  forkPipeServer: ->
+      log 'pipe error:', @spawnedProcess, @pipeErrorCount, e.code, pipePath
+      if ++@pipeErrorCount < 5
+        setTimeout (=> @connectToPipeServer()), 1000
+  
+  spawnHelperProcess: ->
     @child = childProcess.spawn 'node', [helperPath, @debug],
       {detached:yes, stdio: ['ignore', 'ignore', 'ignore']}
     log 'helper process spawned on pid', @child.pid
-    setTimeout =>
-      @createdServer = yes
+    @spawnedProcess = yes
+    setImmediate =>
       @connectToPipeServer()
-    , 2000
     
   send: (cmd, msg) -> 
     msg.cmd = cmd
     @pipe.write JSON.stringify msg
-    
+
+# jgkjhg    
   scanned: (msg) ->
     log 'scanned', msg
-    @send 'getFilesForWord', 
+    @send 'getFilesForWord',  
       word:         'asdf'
       caseSensitive: yes
       exactWord:     yes

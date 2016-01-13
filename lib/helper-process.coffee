@@ -7,7 +7,7 @@ crypto    = require 'crypto'
 moment    = require 'moment'
 gitParser = require 'gitignore-parser'
 
-FILE_IDX_INC = 1
+FILE_IDX_INC = 2
 
 debug = process.argv[2]
 logPath = path.join process.cwd(), 'find-all-words_process.log'
@@ -16,6 +16,7 @@ log = (args...) ->
   time = moment().format 'MM-DD HH:mm:ss'
   fs.appendFileSync logPath, time + ' ' + args.join(' ') + '\n'
 log '-- starting helper process --'
+log '-- node version', process.version
 dbg = (if debug then log else ->)
 dbg '-- debug mode'
 
@@ -48,6 +49,7 @@ class HelperProcess
       log 'connection opened', connIdx
       
       destroy = =>
+        log 'connection ended', connIdx
         delete @connections[connIdx]
         socket.destroy() 
         socket = null
@@ -58,15 +60,15 @@ class HelperProcess
         @[msg.cmd] connIdx, msg
         
       socket.on 'error', (err) ->
-        log 'socket error on connection', connIdx, err.message
+        log 'socket error', err.message
         destroy()
         
-      socket.on 'end', ->
-        log 'connection ended', connIdx
-        destroy()
+      socket.on 'end', destroy
         
     setInterval =>
+      log 'setInterval', '\n', (new Date(lastConnection)).toString(), '\n', (new Date).toString()
       for connection in @connections when connection
+        log 'lastConnection = Date.now()'
         lastConnection = Date.now()
         break
       if Date.now() > lastConnection + 200e3
@@ -101,8 +103,6 @@ class HelperProcess
     onFileIndexes = (indexes) =>
       for idx in indexes when idx
         filePaths[@filesByIndex[idx].path] = yes
-    # if word is 'asdf'
-      # log 'getFilesForWord', word, assign, none
     if assign and none
       @traverseWordTrie word, caseSensitive, exactWord, 'all', onFileIndexes
     else
@@ -250,22 +250,31 @@ class HelperProcess
       for fileIdx, idx in fileIndexes when fileIdx is fileIndex
         fileIndexes[idx] = 0
         return
+        
+  setFileIndexesInTrie: (word, fileIndexes, type) ->
+    @indexesAdded += fileIndexes.length
+    node = @getAddWordNodeFromTrie word
+    node[type] = fileIndexes
   
   addWordFileIndexToTrie: (word, fileIndex, type) ->
-    # if word is 'asdf'
-      # log 'addWordFileIndexToTrie', word, fileIndex, type
     @indexesAdded++
     node = @getAddWordNodeFromTrie word
-    fileIndexes = node[type] ?= new Int16Array FILE_IDX_INC
+    fileIndexes = node[type] ?= new Int32Array FILE_IDX_INC
     for fileIdx, idx in fileIndexes when fileIdx is 0
       fileIndexes[idx] = fileIndex
+      if word is 'asdf'
+        log 'addWordFileIndexToTrie empty', 
+             util.inspect {node, fileIdx, idx, fileIndex, fileIndexes}
       return
     oldLen = fileIndexes.length
     newLen = oldLen + FILE_IDX_INC
-    newFileIndexes = new Int16Array newLen
+    newFileIndexes = new Int32Array newLen
     newFileIndexes[FILE_IDX_INC-1] = fileIndex
     newFileIndexes.set fileIndexes, FILE_IDX_INC
     node[type] = newFileIndexes
+    if word is 'asdf'
+      log 'addWordFileIndexToTrie non-empty', 
+           util.inspect {node, fileIndex, newFileIndexes}
   
   getAddWordNodeFromTrie: (word) ->
     node = @wordTrie
@@ -276,13 +285,15 @@ class HelperProcess
     node
   
   traverseWordTrie: (wordIn, caseSensitive, exactWord, type, onFileIndexes) -> 
-    # if wordIn is 'asdf'
-      # log 'traverseWordTrie', type
+    if (asdf = wordIn is 'asdf')
+      log 'traverseWordTrie', util.inspect {wordIn, caseSensitive, exactWord, type}
     visitNode = (node, wordLeft, wordForNode) ->
       if not wordLeft
         if node.as and type in ['all', 'assign']
+          if asdf then log 'as', util.inspect(node.as), wordForNode
           onFileIndexes node.as, wordForNode, 'as'
         if node.no and type in ['all', 'none']
+          if asdf then log 'no', util.inspect(node.no), wordForNode
           onFileIndexes node.no, wordForNode, 'no'
         if exactWord then return
       for letter, childNode of node when letter.length is 1
@@ -295,27 +306,33 @@ class HelperProcess
   saveAllData: ->
     dbg 'saving to', @opts.dataPath
     tmpPath = @opts.dataPath + '.tmp'
-    fd = fs.openSync tmpPath, 'w'
-    writeJson = (obj) ->
-      json    = JSON.stringify obj
-      jsonLen = Buffer.byteLength json
-      buf     = new Buffer 4 + jsonLen
-      buf.writeInt32BE jsonLen, 0
-      buf.write json, 4
-      fs.writeSync fd, buf, 0, buf.length
-    writeJson @filesByIndex
+    fd      = fs.openSync tmpPath, 'w'
+    
+    json = JSON.stringify @filesByIndex
+    while ((jsonLen = Buffer.byteLength json) % 4) then json += ' '
+    jsonBuf = new Buffer 4 + jsonLen
+    jsonBuf.writeInt32BE jsonLen, 0
+    jsonBuf.write json, 4
+    fs.writeSync fd, jsonBuf, 0, jsonBuf.length
+    
     @traverseWordTrie '', no, no, 'all', (fileIndexes, word, type) ->
       hdr    = word + ';' + type
+      while (hdr.length % 4) then hdr += ' '
       hdrLen = Buffer.byteLength hdr
-      buf    = new Buffer 4 + hdrLen
-      buf.writeInt32BE hdrLen, 0
-      buf.write hdr, 4
-      fs.writeSync fd, buf, 0, buf.length
-      bufIdx = new Buffer fileIndexes.buffer
-      buf = new Buffer 4
-      buf.writeInt32BE bufIdx.length, 0
-      fs.writeSync fd, buf, 0, buf.length
+      bufHdr = new Buffer 4 + hdrLen
+      bufHdr.writeInt32BE hdrLen, 0
+      bufHdr.write hdr, 4
+      fs.writeSync fd, bufHdr, 0, bufHdr.length
+      
+      bufIdxLen = fileIndexes.length * 4
+      bufIdx = new Buffer 4 + bufIdxLen
+      bufIdx.writeInt32BE bufIdxLen, 0
+      for i in [0...fileIndexes.length]
+        bufIdx.writeInt32BE fileIndexes[i], 4 + i*4
+      if word is 'asdf'
+        log 'bufIdx', bufIdx.length, util.inspect {fileIndexes, word, type, bufIdx, fileIndexes}
       fs.writeSync fd, bufIdx, 0, bufIdx.length
+      
     fs.closeSync fd
     fs.removeSync @opts.dataPath
     fs.moveSync tmpPath, @opts.dataPath
@@ -344,19 +361,20 @@ class HelperProcess
         fs.readSync fd, buf, 0, hdrLen
         hdr = buf.toString()
         [word,type] = hdr.split ';'
+        type = type[0..1]
         idxLen = readLen()
         buf = new Buffer idxLen
         fs.readSync fd, buf, 0, idxLen
         fileIndexes = new Int16Array idxLen/4
         for i in [0...idxLen/4]
-          fileIndexes[i] = buf.readInt16BE i*4, true
-        @addWordFileIndexToTrie word, fileIndexes, type
+          fileIndexes[i] = buf.readInt32BE i*4, true
+        @setFileIndexesInTrie word, fileIndexes, type
       log 'loaded', @filesByIndex.length, Object.keys(@wordTrie).length
     catch e
       @filesByIndex = []
       @filesByPath  = {}
       @wordTrie     = {}
-      log 'Warning: unable to load data file', @opts.dataPath
+      log 'Warning: data file read err', util.inspect e
       
   destroy: -> 
     

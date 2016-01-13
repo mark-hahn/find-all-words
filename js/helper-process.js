@@ -17,7 +17,7 @@
 
   gitParser = require('gitignore-parser');
 
-  FILE_IDX_INC = 1;
+  FILE_IDX_INC = 2;
 
   debug = process.argv[2];
 
@@ -33,6 +33,8 @@
   };
 
   log('-- starting helper process --');
+
+  log('-- node version', process.version);
 
   dbg = (debug ? log : function() {});
 
@@ -70,6 +72,7 @@
           _this.connections[connIdx] = socket;
           log('connection opened', connIdx);
           destroy = function() {
+            log('connection ended', connIdx);
             delete _this.connections[connIdx];
             socket.destroy();
             return socket = null;
@@ -81,24 +84,23 @@
             return _this[msg.cmd](connIdx, msg);
           });
           socket.on('error', function(err) {
-            log('socket error on connection', connIdx, err.message);
+            log('socket error', err.message);
             return destroy();
           });
-          return socket.on('end', function() {
-            log('connection ended', connIdx);
-            return destroy();
-          });
+          return socket.on('end', destroy);
         };
       })(this));
       setInterval((function(_this) {
         return function() {
           var connection, j, len, ref;
+          log('setInterval', '\n', (new Date(lastConnection)).toString(), '\n', (new Date).toString());
           ref = _this.connections;
           for (j = 0, len = ref.length; j < len; j++) {
             connection = ref[j];
             if (!(connection)) {
               continue;
             }
+            log('lastConnection = Date.now()');
             lastConnection = Date.now();
             break;
           }
@@ -386,25 +388,48 @@
       });
     };
 
+    HelperProcess.prototype.setFileIndexesInTrie = function(word, fileIndexes, type) {
+      var node;
+      this.indexesAdded += fileIndexes.length;
+      node = this.getAddWordNodeFromTrie(word);
+      return node[type] = fileIndexes;
+    };
+
     HelperProcess.prototype.addWordFileIndexToTrie = function(word, fileIndex, type) {
       var fileIdx, fileIndexes, idx, j, len, newFileIndexes, newLen, node, oldLen;
       this.indexesAdded++;
       node = this.getAddWordNodeFromTrie(word);
-      fileIndexes = node[type] != null ? node[type] : node[type] = new Int16Array(FILE_IDX_INC);
+      fileIndexes = node[type] != null ? node[type] : node[type] = new Int32Array(FILE_IDX_INC);
       for (idx = j = 0, len = fileIndexes.length; j < len; idx = ++j) {
         fileIdx = fileIndexes[idx];
         if (!(fileIdx === 0)) {
           continue;
         }
         fileIndexes[idx] = fileIndex;
+        if (word === 'asdf') {
+          log('addWordFileIndexToTrie empty', util.inspect({
+            node: node,
+            fileIdx: fileIdx,
+            idx: idx,
+            fileIndex: fileIndex,
+            fileIndexes: fileIndexes
+          }));
+        }
         return;
       }
       oldLen = fileIndexes.length;
       newLen = oldLen + FILE_IDX_INC;
-      newFileIndexes = new Int16Array(newLen);
+      newFileIndexes = new Int32Array(newLen);
       newFileIndexes[FILE_IDX_INC - 1] = fileIndex;
       newFileIndexes.set(fileIndexes, FILE_IDX_INC);
-      return node[type] = newFileIndexes;
+      node[type] = newFileIndexes;
+      if (word === 'asdf') {
+        return log('addWordFileIndexToTrie non-empty', util.inspect({
+          node: node,
+          fileIndex: fileIndex,
+          newFileIndexes: newFileIndexes
+        }));
+      }
     };
 
     HelperProcess.prototype.getAddWordNodeFromTrie = function(word) {
@@ -421,14 +446,28 @@
     };
 
     HelperProcess.prototype.traverseWordTrie = function(wordIn, caseSensitive, exactWord, type, onFileIndexes) {
-      var visitNode;
+      var asdf, visitNode;
+      if ((asdf = wordIn === 'asdf')) {
+        log('traverseWordTrie', util.inspect({
+          wordIn: wordIn,
+          caseSensitive: caseSensitive,
+          exactWord: exactWord,
+          type: type
+        }));
+      }
       visitNode = function(node, wordLeft, wordForNode) {
         var childNode, letter, results;
         if (!wordLeft) {
           if (node.as && (type === 'all' || type === 'assign')) {
+            if (asdf) {
+              log('as', util.inspect(node.as), wordForNode);
+            }
             onFileIndexes(node.as, wordForNode, 'as');
           }
           if (node.no && (type === 'all' || type === 'none')) {
+            if (asdf) {
+              log('no', util.inspect(node.no), wordForNode);
+            }
             onFileIndexes(node.no, wordForNode, 'no');
           }
           if (exactWord) {
@@ -452,32 +491,44 @@
     };
 
     HelperProcess.prototype.saveAllData = function() {
-      var fd, tmpPath, writeJson;
+      var fd, json, jsonBuf, jsonLen, tmpPath;
       dbg('saving to', this.opts.dataPath);
       tmpPath = this.opts.dataPath + '.tmp';
       fd = fs.openSync(tmpPath, 'w');
-      writeJson = function(obj) {
-        var buf, json, jsonLen;
-        json = JSON.stringify(obj);
-        jsonLen = Buffer.byteLength(json);
-        buf = new Buffer(4 + jsonLen);
-        buf.writeInt32BE(jsonLen, 0);
-        buf.write(json, 4);
-        return fs.writeSync(fd, buf, 0, buf.length);
-      };
-      writeJson(this.filesByIndex);
+      json = JSON.stringify(this.filesByIndex);
+      while ((jsonLen = Buffer.byteLength(json)) % 4) {
+        json += ' ';
+      }
+      jsonBuf = new Buffer(4 + jsonLen);
+      jsonBuf.writeInt32BE(jsonLen, 0);
+      jsonBuf.write(json, 4);
+      fs.writeSync(fd, jsonBuf, 0, jsonBuf.length);
       this.traverseWordTrie('', false, false, 'all', function(fileIndexes, word, type) {
-        var buf, bufIdx, hdr, hdrLen;
+        var bufHdr, bufIdx, bufIdxLen, hdr, hdrLen, i, j, ref;
         hdr = word + ';' + type;
+        while (hdr.length % 4) {
+          hdr += ' ';
+        }
         hdrLen = Buffer.byteLength(hdr);
-        buf = new Buffer(4 + hdrLen);
-        buf.writeInt32BE(hdrLen, 0);
-        buf.write(hdr, 4);
-        fs.writeSync(fd, buf, 0, buf.length);
-        bufIdx = new Buffer(fileIndexes.buffer);
-        buf = new Buffer(4);
-        buf.writeInt32BE(bufIdx.length, 0);
-        fs.writeSync(fd, buf, 0, buf.length);
+        bufHdr = new Buffer(4 + hdrLen);
+        bufHdr.writeInt32BE(hdrLen, 0);
+        bufHdr.write(hdr, 4);
+        fs.writeSync(fd, bufHdr, 0, bufHdr.length);
+        bufIdxLen = fileIndexes.length * 4;
+        bufIdx = new Buffer(4 + bufIdxLen);
+        bufIdx.writeInt32BE(bufIdxLen, 0);
+        for (i = j = 0, ref = fileIndexes.length; 0 <= ref ? j < ref : j > ref; i = 0 <= ref ? ++j : --j) {
+          bufIdx.writeInt32BE(fileIndexes[i], 4 + i * 4);
+        }
+        if (word === 'asdf') {
+          log('bufIdx', bufIdx.length, util.inspect({
+            fileIndexes: fileIndexes,
+            word: word,
+            type: type,
+            bufIdx: bufIdx,
+            fileIndexes: fileIndexes
+          }));
+        }
         return fs.writeSync(fd, bufIdx, 0, bufIdx.length);
       });
       fs.closeSync(fd);
@@ -520,14 +571,15 @@
           fs.readSync(fd, buf, 0, hdrLen);
           hdr = buf.toString();
           ref1 = hdr.split(';'), word = ref1[0], type = ref1[1];
+          type = type.slice(0, 2);
           idxLen = readLen();
           buf = new Buffer(idxLen);
           fs.readSync(fd, buf, 0, idxLen);
           fileIndexes = new Int16Array(idxLen / 4);
           for (i = k = 0, ref2 = idxLen / 4; 0 <= ref2 ? k < ref2 : k > ref2; i = 0 <= ref2 ? ++k : --k) {
-            fileIndexes[i] = buf.readInt16BE(i * 4, true);
+            fileIndexes[i] = buf.readInt32BE(i * 4, true);
           }
-          this.addWordFileIndexToTrie(word, fileIndexes, type);
+          this.setFileIndexesInTrie(word, fileIndexes, type);
         }
         return log('loaded', this.filesByIndex.length, Object.keys(this.wordTrie).length);
       } catch (_error) {
@@ -535,7 +587,7 @@
         this.filesByIndex = [];
         this.filesByPath = {};
         this.wordTrie = {};
-        return log('Warning: unable to load data file', this.opts.dataPath);
+        return log('Warning: data file read err', util.inspect(e));
       }
     };
 
