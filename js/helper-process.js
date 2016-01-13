@@ -27,13 +27,8 @@
 
   HelperProcess = (function() {
     function HelperProcess() {
-      this.server = net.createServer((function(_this) {
-        return function() {
-          var args;
-          args = 1 <= arguments.length ? slice.call(arguments, 0) : [];
-          return log('server connected', args);
-        };
-      })(this));
+      this.connections = [];
+      this.server = net.createServer();
       this.server.listen(pipePath, (function(_this) {
         return function() {
           var args;
@@ -41,24 +36,57 @@
           return log('server listen', args);
         };
       })(this));
+      this.server.on('connection', (function(_this) {
+        return function(socket) {
+          var connectionIdx, destroy;
+          socket.connectionIdx = connectionIdx = _this.connections.length;
+          _this.connections.push(socket);
+          log('received connection', connectionIdx);
+          destroy = function() {
+            delete this.connections[connectionIdx];
+            socket.destroy();
+            return socket = null;
+          };
+          socket.on('error', function(err) {
+            log('socket error on connection', connectionIdx, err.message);
+            return destroy();
+          });
+          socket.on('data', function(buf) {
+            var msg;
+            msg = JSON.parse(buf.toString());
+            log('recvd cmd', connectionIdx, msg.cmd);
+            return _this[msg.cmd](connectionIdx, msg);
+          });
+          return socket.on('end', function() {
+            log('socket ended', connectionIdx);
+            return destroy();
+          });
+        };
+      })(this));
     }
 
-    HelperProcess.prototype.send = function(msg) {
-      return process.send(msg);
+    HelperProcess.prototype.send = function(connectionIdx, msg) {
+      var socket;
+      if ((socket = this.connections[connectionIdx])) {
+        return socket.write(JSON.stringify(msg));
+      }
     };
 
-    HelperProcess.prototype.init = function(opts) {
+    HelperProcess.prototype.init = function(connectionIdx, opts) {
       this.opts = opts;
-      this.loadAllData();
-      return this.scanAll();
+      log('init', this.opts.newProcess);
+      if (this.opts.newProcess) {
+        this.loadAllData();
+      }
+      return this.scanAll(connectionIdx);
     };
 
-    HelperProcess.prototype.updateOpts = function(opts) {
+    HelperProcess.prototype.updateOpts = function(connectionIdx, opts) {
       this.opts = opts;
-      return this.scanAll();
+      return this.scanAll(connectionIdx);
     };
 
-    HelperProcess.prototype.getFilesForWord = function(msg) {
+    HelperProcess.prototype.getFilesForWord = function(connectionIdx, msg) {
       var assign, caseSensitive, exactWord, filePaths, none, onFileIndexes, word;
       word = msg.word, caseSensitive = msg.caseSensitive, exactWord = msg.exactWord, assign = msg.assign, none = msg.none;
       filePaths = {};
@@ -96,7 +124,7 @@
       });
     };
 
-    HelperProcess.prototype.scanAll = function() {
+    HelperProcess.prototype.scanAll = function(connectionIdx) {
       var j, k, len, len1, optPath, projPath, ref, ref1;
       this.filesChecked = this.filesAdded = this.filesRemoved = this.indexesAdded = this.timeMismatchCount = this.md5MismatchCount = this.changeCount = 0;
       this.setAllFileRemoveMarkers();
@@ -120,6 +148,7 @@
         this.saveAllData();
       }
       return this.send({
+        connectionIdx: connectionIdx,
         cmd: 'scanned',
         indexesAdded: this.indexesAdded,
         filesChecked: this.filesChecked,
@@ -392,7 +421,8 @@
       });
       fs.closeSync(fd);
       fs.removeSync(this.opts.dataPath);
-      return fs.moveSync(tmpPath, this.opts.dataPath);
+      fs.moveSync(tmpPath, this.opts.dataPath);
+      return log('saved');
     };
 
     HelperProcess.prototype.loadAllData = function() {

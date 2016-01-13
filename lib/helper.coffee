@@ -15,25 +15,27 @@ pipePath =
 module.exports =
 class Helper
   
-  constructor: (initOpts) ->
-    log atom.project.getPaths()[0]
+  constructor: (@initOpts) ->
     if atom.project.getPaths()[0] is '/root/.atom/packages/find-all-words'
       log 'Error: killing process, this should only happen in debug'
       childProcess.execSync \
-        'kill $(pgrep -f "find-all-words/js/helper-process.js") 2> /dev/null' 
+        'kill $(pgrep -f "find-all-words/js/helper-process.js")' +
+         ' 2> /dev/null' 
       fs.removeSync pipePath
     @connectToPipeServer()
     
   connectToPipeServer: ->
     @pipe = net.createConnection path: pipePath, (args...) =>
       log 'pipe connected', args
-      @pipe.unref()
       @pipe.setNoDelay()
-      # @pipe.setTimeout 2000, (args...) ->
-      #   log 'pipe timeout', args
+      @pipe.unref()
+      @send Object.assign \
+        {cmd:'init', newProcess:@createdServer}, @initOpts
         
-    @pipe.on 'data', (args...) ->
-      log 'pipe recv data', args
+    @pipe.on 'data', (buf) => 
+      msg = JSON.parse buf.toString()
+      log 'recvd cmd', msg.cmd
+      @[msg.cmd] msg
       
     @pipe.on 'error', (e) => 
       @pipe.destroy()
@@ -42,9 +44,9 @@ class Helper
         @forkPipeServer()
         return
       log 'pipe error:', e.code, pipePath
-  
+      
   forkPipeServer: ->
-    log 'forking pipe server'
+    log 'forking helper-process'
     @child = childProcess.fork helperPath, silent:yes, detached:yes
     @child.stdout.on 'data',     (data) -> 
       for line in data.toString().split '\n' when line then procLog line
@@ -53,39 +55,22 @@ class Helper
     setImmediate =>
       @createdServer = yes
       @connectToPipeServer()
+  
+  send: (msg) -> @pipe.write JSON.stringify msg
     
-  #   @child = childProcess.fork helperPath, silent:yes, detached:yes
-  #   
-  #   @child.on 'message',          (msg) => @[msg.cmd] msg
-  #   @child.on 'error',            (err) => @error err
-  #   @child.on 'close',           (code) => log 'process exited with code', code
-  #   @child.stdout.on 'data',     (data) -> 
-  #     for line in data.toString().split '\n' when line then procLog line
-  #   @child.stderr.on 'data',     (data) ->
-  #     procLog 'STDERR ...\n', data.toString()
-  #   @send 'init', initOpts
-  # 
-  # send: (cmd, data) -> @child.send Object.assign {cmd}, data
-  # 
-  # # for asdf in y
-  # 
-  # scanned: (msg) ->
-  #   log 'scanned', msg
-  #   @send 'getFilesForWord', 
-  #     word:         'asdf'
-  #     caseSensitive: yes
-  #     exactWord:     yes
-  #     assign:        yes
-  #     none:          no
-  #   
-  # filesForWord: (msg) ->
-  #   log 'filesForWord', msg
-  # 
-  # error: (err) ->
-  #   log 'error:', err.message
-  #   @child = null
-  # 
-  # destory: ->
-  #   @child?.kill()
-  #   @child = null
-  # 
+  scanned: (msg) ->
+    log 'scanned', msg
+    @send 'getFilesForWord', 
+      word:         'asdf'
+      caseSensitive: yes
+      exactWord:     yes
+      assign:        yes
+      none:          no
+    
+  filesForWord: (msg) ->
+    log 'filesForWord', msg
+
+  destroy: ->
+    @child = null
+    @pipe.destroy()
+    @pipe = null

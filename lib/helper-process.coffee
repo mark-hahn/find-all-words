@@ -15,25 +15,48 @@ pipePath =
 
 class HelperProcess
   constructor: ->
-    # process.on 'message', (msg) => @[msg.cmd] msg
-    # process.on 'disconnect',    => @destroy()
-
-    @server = net.createServer (args...) =>
-      log 'server connected', args
+    @connections = []
+    @server = net.createServer()
       
     @server.listen pipePath, (args...) =>
       log 'server listen', args
+      
+    @server.on 'connection', (socket) =>
+      socket.connectionIdx = connectionIdx = @connections.length
+      @connections.push socket
+      log 'received connection', connectionIdx
+      
+      destroy = ->
+        delete @connections[connectionIdx]
+        socket.destroy() 
+        socket = null
+        
+      socket.on 'error', (err) ->
+        log 'socket error on connection', connectionIdx, err.message
+        destroy()
+        
+      socket.on 'data', (buf) => 
+        msg = JSON.parse buf.toString()
+        log 'recvd cmd', connectionIdx, msg.cmd
+        @[msg.cmd] connectionIdx, msg
     
-  send: (msg) -> process.send msg
+      socket.on 'end', ->
+        log 'socket ended', connectionIdx
+        destroy()
+        
+  send: (connectionIdx, msg) -> 
+    if (socket = @connections[connectionIdx])
+      socket.write JSON.stringify msg
   
-  init: (@opts) ->
-    @loadAllData()
-    @scanAll()
+  init: (connectionIdx, @opts) ->
+    log 'init', @opts.newProcess
+    if @opts.newProcess then @loadAllData()
+    @scanAll connectionIdx
     
-  updateOpts: (@opts) -> 
-    @scanAll()
+  updateOpts: (connectionIdx, @opts) -> 
+    @scanAll connectionIdx
   
-  getFilesForWord: (msg) ->
+  getFilesForWord: (connectionIdx, msg) ->
     {word, caseSensitive, exactWord, assign, none} = msg
     filePaths = {}
     onFileIndexes = (indexes) =>
@@ -54,7 +77,7 @@ class HelperProcess
       word, caseSensitive, exactWord, assign, none
     }
 
-  scanAll: ->
+  scanAll: (connectionIdx) ->
     @filesChecked = 
       @filesAdded = @filesRemoved = @indexesAdded = 
       @timeMismatchCount = @md5MismatchCount =
@@ -68,7 +91,8 @@ class HelperProcess
           @scanProject projPath
     @removeMarkedFiles()
     @saveAllData() if @changeCount
-    @send {cmd: 'scanned', \
+    @send {connectionIdx, \
+             cmd: 'scanned',
              @indexesAdded, @filesChecked,
              @filesAdded, @filesRemoved,
              @timeMismatchCount, @md5MismatchCount, 
@@ -257,6 +281,7 @@ class HelperProcess
     fs.closeSync fd
     fs.removeSync @opts.dataPath
     fs.moveSync tmpPath, @opts.dataPath
+    log 'saved'
     
   loadAllData: ->
     log 'loading from', @opts.dataPath
