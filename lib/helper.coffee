@@ -25,7 +25,6 @@ class Helper
       childProcess.execSync \
         'kill $(pgrep -f "find-all-words/js/helper-process.js")' +
          ' 2> /dev/null' 
-      fs.removeSync pipePath
     @createdServer = no
     @connectToPipeServer()
     
@@ -45,19 +44,20 @@ class Helper
     @pipe.on 'error', (e) => 
       @pipe.destroy()
       @pipe = null
-      if not @createdServer and e.code is 'ENOENT'
+      if not @createdServer and e.code in ['ENOENT', 'ECONNREFUSED']
         @forkPipeServer()
         return
-      log 'pipe error:', e.code, pipePath
+      log 'pipe error:', @createdServer, e.code, pipePath
       
   forkPipeServer: ->
     @child = childProcess.spawn 'node', [helperPath, @debug],
       {detached:yes, stdio: ['ignore', 'ignore', 'ignore']}
     log 'helper process spawned on pid', @child.pid
-    setImmediate =>
+    setTimeout =>
       @createdServer = yes
       @connectToPipeServer()
-  
+    , 2000
+    
   send: (cmd, msg) -> 
     msg.cmd = cmd
     @pipe.write JSON.stringify msg
@@ -69,7 +69,7 @@ class Helper
       caseSensitive: yes
       exactWord:     yes
       assign:        yes
-      none:          no
+      none:          yes
     
   filesForWord: (msg) ->
     log 'filesForWord', msg

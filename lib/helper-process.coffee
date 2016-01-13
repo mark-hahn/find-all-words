@@ -8,20 +8,21 @@ moment    = require 'moment'
 gitParser = require 'gitignore-parser'
 
 FILE_IDX_INC = 1
+
+debug = process.argv[2]
+logPath = path.join process.cwd(), 'find-all-words_process.log'
+fs.removeSync logPath
+log = (args...) -> 
+  time = moment().format 'MM-DD HH:mm:ss'
+  fs.appendFileSync logPath, time + ' ' + args.join(' ') + '\n'
+log '-- starting helper process --'
+dbg = (if debug then log else ->)
+dbg '-- debug mode'
+
 pipePath = 
   if (process.platform is 'win32') 
     '\\\\.\\pipe\\atomfindallwords.sock'
   else '/tmp/atomfindallwords.sock'
-logPath   = path.join process.cwd(), 'find-all-words_process.log'
-
-if not (debug = process.argv[2])
-  log = ->
-else
-  log = (args...) -> 
-    time = moment().format 'MM-DD HH:mm:ss'
-    fs.appendFileSync logPath, time + ' ' + args.join(' ') + '\n'
-  fs.appendFileSync logPath, '\n'
-log '-- starting helper process --', debug
 
 process.on 'uncaughtException', (err) ->
   log '-- uncaughtException --'
@@ -30,16 +31,21 @@ process.on 'uncaughtException', (err) ->
 
 class HelperProcess
   constructor: ->
+    lastConnection = Date.now()
     @connections = []
-    @server = net.createServer()
+    server = net.createServer()
       
-    @server.listen pipePath, =>
+    fs.removeSync pipePath
+    server.listen pipePath, =>
       log 'server listening on', process.pid
       
-    @server.on 'connection', (socket) =>
+    server.on 'error', (err) ->
+      log 'server error', err.message
+        
+    server.on 'connection', (socket) =>
       connIdx = @connections.length
       @connections[connIdx] = socket
-      log 'received connection', connIdx
+      log 'connection opened', connIdx
       
       destroy = =>
         delete @connections[connIdx]
@@ -48,7 +54,7 @@ class HelperProcess
         
       socket.on 'data', (buf) => 
         msg = JSON.parse buf.toString()
-        log 'recvd cmd', connIdx, msg.cmd
+        dbg 'recvd cmd', connIdx, msg.cmd
         @[msg.cmd] connIdx, msg
         
       socket.on 'error', (err) ->
@@ -56,8 +62,20 @@ class HelperProcess
         destroy()
         
       socket.on 'end', ->
-        log 'socket ended', connIdx
+        log 'connection ended', connIdx
         destroy()
+        
+    setInterval =>
+      for connection in @connections when connection
+        lastConnection = Date.now()
+        break
+      if Date.now() > lastConnection + 200e3
+        log '-- terminating idle process'
+        server.close ->
+          fs.removeSync pipePath
+          log '-- terminated'
+          process.exit 0
+    , 60e3
         
   send: (connIdx, cmd, msg) -> 
     if (socket = @connections[connIdx])
@@ -104,7 +122,7 @@ class HelperProcess
       @changeCount = 0
     @setAllFileRemoveMarkers()
     for optPath in @opts.paths
-      log 'scanning', optPath
+      dbg 'scanning', optPath
       if @scanProject optPath then continue
       for projPath in fs.listSync optPath
         if fs.isDirectorySync projPath
@@ -275,7 +293,7 @@ class HelperProcess
     visitNode @wordTrie, wordIn, ''
   
   saveAllData: ->
-    log 'saving to', @opts.dataPath
+    dbg 'saving to', @opts.dataPath
     tmpPath = @opts.dataPath + '.tmp'
     fd = fs.openSync tmpPath, 'w'
     writeJson = (obj) ->
@@ -301,7 +319,7 @@ class HelperProcess
     fs.closeSync fd
     fs.removeSync @opts.dataPath
     fs.moveSync tmpPath, @opts.dataPath
-    log 'saved'
+    dbg 'saved'
     
   loadAllData: ->
     log 'loading from', @opts.dataPath
