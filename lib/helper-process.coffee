@@ -1,10 +1,10 @@
 
-log       = (args...) -> console.log.apply console, args
 fs        = require 'fs-plus'
+net       = require 'net'
 path      = require 'path'
 util      = require 'util'
-net       = require 'net'
 crypto    = require 'crypto'
+moment    = require 'moment'
 gitParser = require 'gitignore-parser'
 
 FILE_IDX_INC = 1
@@ -12,51 +12,72 @@ pipePath =
   if (process.platform is 'win32') 
     '\\\\.\\pipe\\atomfindallwords.sock'
   else '/tmp/atomfindallwords.sock'
+logPath   = path.join process.cwd(), 'find-all-words_process.log'
+
+if not (debug = process.argv[2])
+  log = ->
+else
+  log = (args...) -> 
+    time = moment().format 'MM-DD HH:mm:ss'
+    fs.appendFileSync logPath, time + ' ' + args.join(' ') + '\n'
+  fs.appendFileSync logPath, '\n'
+log '-- starting helper process --', debug
+
+process.on 'uncaughtException', (err) ->
+  log '-- uncaughtException --'
+  log util.inspect err, depth:null
+  process.exit 1
 
 class HelperProcess
   constructor: ->
     @connections = []
     @server = net.createServer()
       
-    @server.listen pipePath, (args...) =>
-      log 'server listen', args
+    @server.listen pipePath, =>
+      log 'server listening on', process.pid
       
     @server.on 'connection', (socket) =>
-      socket.connectionIdx = connectionIdx = @connections.length
-      @connections.push socket
-      log 'received connection', connectionIdx
+      connIdx = @connections.length
+      @connections[connIdx] = socket
+      log 'received connection', connIdx
       
-      destroy = ->
-        delete @connections[connectionIdx]
+      destroy = =>
+        delete @connections[connIdx]
         socket.destroy() 
         socket = null
         
-      socket.on 'error', (err) ->
-        log 'socket error on connection', connectionIdx, err.message
-        destroy()
-        
       socket.on 'data', (buf) => 
         msg = JSON.parse buf.toString()
-        log 'recvd cmd', connectionIdx, msg.cmd
-        @[msg.cmd] connectionIdx, msg
-    
-      socket.on 'end', ->
-        log 'socket ended', connectionIdx
+        log 'recvd cmd', connIdx, msg.cmd
+        @[msg.cmd] connIdx, msg
+        
+      socket.on 'error', (err) ->
+        log 'socket error on connection', connIdx, err.message
         destroy()
         
-  send: (connectionIdx, msg) -> 
-    if (socket = @connections[connectionIdx])
+      socket.on 'end', ->
+        log 'socket ended', connIdx
+        destroy()
+        
+  send: (connIdx, cmd, msg) -> 
+    if (socket = @connections[connIdx])
+      msg.cmd = cmd
       socket.write JSON.stringify msg
   
-  init: (connectionIdx, @opts) ->
+  broadcast: (cmd, msg) ->
+    msg.cmd = cmd
+    for socket in @connections when socket
+      socket.write JSON.stringify msg
+
+  init: (connIdx, @opts) ->
     log 'init', @opts.newProcess
     if @opts.newProcess then @loadAllData()
-    @scanAll connectionIdx
+    @scanAll connIdx
     
-  updateOpts: (connectionIdx, @opts) -> 
-    @scanAll connectionIdx
+  updateOpts: (connIdx, @opts) -> 
+    @scanAll connIdx
   
-  getFilesForWord: (connectionIdx, msg) ->
+  getFilesForWord: (connIdx, msg) ->
     {word, caseSensitive, exactWord, assign, none} = msg
     filePaths = {}
     onFileIndexes = (indexes) =>
@@ -71,13 +92,12 @@ class HelperProcess
         @traverseWordTrie word, caseSensitive, exactWord, 'assign', onFileIndexes
       if none
         @traverseWordTrie word, caseSensitive, exactWord, 'none', onFileIndexes
-    @send {
-      cmd:  'filesForWord'
+    @send connIdx, 'filesForWord', {
       files: Object.keys filePaths
       word, caseSensitive, exactWord, assign, none
     }
 
-  scanAll: (connectionIdx) ->
+  scanAll: (connIdx) ->
     @filesChecked = 
       @filesAdded = @filesRemoved = @indexesAdded = 
       @timeMismatchCount = @md5MismatchCount =
@@ -91,12 +111,12 @@ class HelperProcess
           @scanProject projPath
     @removeMarkedFiles()
     @saveAllData() if @changeCount
-    @send {connectionIdx, \
-             cmd: 'scanned',
-             @indexesAdded, @filesChecked,
-             @filesAdded, @filesRemoved,
-             @timeMismatchCount, @md5MismatchCount, 
-             @changeCount }
+    @broadcast 'scanned', {
+      @indexesAdded, @filesChecked,
+      @filesAdded, @filesRemoved,
+      @timeMismatchCount, @md5MismatchCount, 
+      @changeCount 
+    }
 
 ################## PRIVATE ##################
 
@@ -290,34 +310,35 @@ class HelperProcess
     @wordTrie     = {}
     try
       fd = fs.openSync @opts.dataPath, 'r'
+      readLen = ->
+        buf = new Buffer 4
+        bytesRead = fs.readSync fd, buf, 0, 4
+        if not bytesRead then 0
+        else buf.readInt32BE 0
+      jsonLen = readLen()
+      buf = new Buffer jsonLen
+      fs.readSync fd, buf, 0, jsonLen
+      @filesByIndex = JSON.parse buf.toString()
+      for file in @filesByIndex when file
+        @filesByPath[file.path] = file
+      while (hdrLen = readLen())
+        buf = new Buffer hdrLen
+        fs.readSync fd, buf, 0, hdrLen
+        hdr = buf.toString()
+        [word,type] = hdr.split ';'
+        idxLen = readLen()
+        buf = new Buffer idxLen
+        fs.readSync fd, buf, 0, idxLen
+        fileIndexes = new Int16Array idxLen/4
+        for i in [0...idxLen/4]
+          fileIndexes[i] = buf.readInt16BE i*4, true
+        @addWordFileIndexToTrie word, fileIndexes, type
+      log 'loaded', @filesByIndex.length, Object.keys(@wordTrie).length
     catch e
-      log 'Warning: data file missing:', @opts.dataPath
-      return
-    readLen = ->
-      buf = new Buffer 4
-      bytesRead = fs.readSync fd, buf, 0, 4
-      if not bytesRead then 0
-      else buf.readInt32BE 0
-    jsonLen = readLen()
-    buf = new Buffer jsonLen
-    fs.readSync fd, buf, 0, jsonLen
-    @filesByIndex = JSON.parse buf.toString()
-    for file in @filesByIndex when file
-      @filesByPath[file.path] = file
-    while (hdrLen = readLen())
-      buf = new Buffer hdrLen
-      fs.readSync fd, buf, 0, hdrLen
-      hdr = buf.toString()
-      [word,type] = hdr.split ';'
-      idxLen = readLen()
-      buf = new Buffer idxLen
-      fs.readSync fd, buf, 0, idxLen
-      fileIndexes = new Int16Array idxLen/4
-      for i in [0...idxLen/4]
-        fileIndexes[i] = buf.readInt16BE i*4, true
-      @addWordFileIndexToTrie word, fileIndexes, type
-      
-    log 'loaded', @filesByIndex.length, Object.keys(@wordTrie).length
+      @filesByIndex = []
+      @filesByPath  = {}
+      @wordTrie     = {}
+      log 'Warning: unable to load data file', @opts.dataPath
       
   destroy: -> 
     

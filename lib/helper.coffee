@@ -3,6 +3,7 @@ log          = require('./utils') 'hlpr'
 fs           = require 'fs-plus'
 net          = require 'net'
 util         = require 'util'
+path         = require 'path'
 procLog      = require('./utils') 'proc'
 childProcess = require 'child_process'
 
@@ -16,21 +17,25 @@ module.exports =
 class Helper
   
   constructor: (@initOpts) ->
-    if atom.project.getPaths()[0] is '/root/.atom/packages/find-all-words'
-      log 'Error: killing process, this should only happen in debug'
+    @debug = 
+      if atom.project.getPaths()[0] is '/root/.atom/packages/find-all-words' then 'debug'
+      else ''
+    if @debug
+      log 'Warning: killing helper process, this should only happen when debugging'
       childProcess.execSync \
         'kill $(pgrep -f "find-all-words/js/helper-process.js")' +
          ' 2> /dev/null' 
       fs.removeSync pipePath
+    @createdServer = no
     @connectToPipeServer()
     
   connectToPipeServer: ->
-    @pipe = net.createConnection path: pipePath, (args...) =>
-      log 'pipe connected', args
+    @pipe = net.createConnection path: pipePath, =>
+      log 'connected to helper process'
       @pipe.setNoDelay()
       @pipe.unref()
-      @send Object.assign \
-        {cmd:'init', newProcess:@createdServer}, @initOpts
+      @initOpts.newProcess = @createdServer
+      @send 'init', @initOpts
         
     @pipe.on 'data', (buf) => 
       msg = JSON.parse buf.toString()
@@ -46,17 +51,16 @@ class Helper
       log 'pipe error:', e.code, pipePath
       
   forkPipeServer: ->
-    log 'forking helper-process'
-    @child = childProcess.fork helperPath, silent:yes, detached:yes
-    @child.stdout.on 'data',     (data) -> 
-      for line in data.toString().split '\n' when line then procLog line
-    @child.stderr.on 'data',     (data) ->
-      procLog 'STDERR ...\n', data.toString()
+    @child = childProcess.spawn 'node', [helperPath, @debug],
+      {detached:yes, stdio: ['ignore', 'ignore', 'ignore']}
+    log 'helper process spawned on pid', @child.pid
     setImmediate =>
       @createdServer = yes
       @connectToPipeServer()
   
-  send: (msg) -> @pipe.write JSON.stringify msg
+  send: (cmd, msg) -> 
+    msg.cmd = cmd
+    @pipe.write JSON.stringify msg
     
   scanned: (msg) ->
     log 'scanned', msg
