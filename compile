@@ -1,1 +1,1 @@
-coffee -cwo js lib/helper-process.coffee &
+coffee -cwo js lib/helper-process.coffee lib/helper-utils.coffee &

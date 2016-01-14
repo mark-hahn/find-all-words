@@ -3,27 +3,24 @@ fs        = require 'fs-plus'
 net       = require 'net'
 path      = require 'path'
 util      = require 'util'
+utils     = require './helper-utils'
 crypto    = require 'crypto'
-moment    = require 'moment'
 gitParser = require 'gitignore-parser'
 
 FILE_IDX_INC = 2
+ASSIGN_MASK  = 0xC0000000
+CALL_MASK    = 0x30000000
+ARG_MASK     = 0x0C000000
+PARAM_MASK   = 0x03000000
+VAR_MASK     = 0x00C00000
+INDEX_MASK   = 0x000FFFFF
 
-debug = process.argv[2]
-logPath = path.join process.cwd(), 'find-all-words_process.log'
-fs.removeSync logPath
-log = (args...) -> 
-  time = moment().format 'MM-DD HH:mm:ss'
-  fs.appendFileSync logPath, time + ' ' + args.join(' ') + '\n'
+log = utils.log
+dbg = utils.dbg
+
 log '-- starting helper process --'
-log '-- node version', process.version
-dbg = (if debug then log else ->)
-dbg '-- debug mode'
 
-pipePath = 
-  if (process.platform is 'win32') 
-    '\\\\.\\pipe\\atomfindallwords.sock'
-  else '/tmp/atomfindallwords.sock'
+log '-- faw/node version', utils.version, '/', process.version
 
 process.on 'uncaughtException', (err) ->
   log '-- uncaughtException --'
@@ -36,8 +33,8 @@ class HelperProcess
     @connections = []
     server = net.createServer()
       
-    fs.removeSync pipePath
-    server.listen pipePath, =>
+    fs.removeSync utils.pipePath
+    server.listen utils.pipePath, =>
       log 'server listening on', process.pid
       
     server.on 'error', (err) ->
@@ -74,7 +71,7 @@ class HelperProcess
       if Date.now() > lastConnection + 200e3
         log '-- terminating idle process'
         server.close ->
-          fs.removeSync pipePath
+          fs.removeSync utils.pipePath
           log '-- terminated'
           process.exit 0
     , 60e3
@@ -170,7 +167,7 @@ class HelperProcess
       return
     if not stats.isFile() then return
     
-    # log 'oldFile', filePath, stats.mtime, Object.keys(@filesByPath).length
+    # dbg 'oldFile', filePath, stats.mtime, Object.keys(@filesByPath).length
     
     if (oldFile = @filesByPath[filePath])
       delete oldFile.remove
@@ -183,19 +180,17 @@ class HelperProcess
     @timeMismatchCount++ 
     
     try
-      text = fs.readFileSync filePath
+      text = fs.readFileSync filePath, 'utf8'
     catch e
       log 'ERROR reading file, skipping', filePath, e.message
       return
     wordsAssign = {}
     wordsNone   = {}
-    wordRegex = new RegExp @opts.wordRegexStr, 'g'
-    while (parts = wordRegex.exec text)
-      word = parts[0]
+    text.replace /(\S+)(\s|$)/g, (match, word, __, ofs) ->
+      # varRegex = /\b[a-z_$]\W+\b/ig
       if word not of wordsAssign
-        idx    = wordRegex.lastIndex
-        before = text[0...idx-word.length]
-        after  = text[idx...]
+        before = text[0...ofs]
+        after  = text[ofs+word.length...]
         if /^\s*=/.test(after)                            or
            /function\s+$/.test(before)                    or
            /for\s+(\w+,)?\s*$/.test(before) and 
@@ -208,6 +203,7 @@ class HelperProcess
           delete wordsNone[word]
         else
           wordsNone[word] = yes
+      match
     wordsAssignList = Object.keys(wordsAssign).sort()
     wordsNoneList   = Object.keys(wordsNone  ).sort()
     

@@ -17,12 +17,6 @@ module.exports =
       type: 'string'
       default: '~/.atom/projects'
       
-    wordRegex:
-      title: 'Word Regex'
-      description: 'Regular expression to match words'
-      type: 'string'
-      default: '[a-zA-Z_\\$]\\w*'
-      
     suffixes:
       title: 'File Suffixes'
       description: 'Search only in files with these suffixes (separate with commas)'
@@ -39,7 +33,6 @@ module.exports =
     subs.add atom.config.onDidChange 'find-all-words.dataPath',  cb
     subs.add atom.config.onDidChange 'find-all-words.paths',     cb
     subs.add atom.config.onDidChange 'find-all-words.suffixes',  cb
-    subs.add atom.config.onDidChange 'find-all-words.wordRegex', cb
     subs.add atom.config.onDidChange 'find-all-words.gitignore', cb
 
   get: ->
@@ -57,14 +50,7 @@ module.exports =
     dataPathStr = atom.config.get 'find-all-words.dataPath'
     dataPath = path.join dataPathStr, '.find-all-files.data'
     
-    wordRegexStr = atom.config.get 'find-all-words.wordRegex'
-    try
-      new RegExp wordRegexStr
-    catch e
-      log 'ERROR parsing word regex, using "[a-zA-Z_\\$]\\w*"', regexStr, e.message
-      wordRegexStr = "[a-zA-Z_\\$]\\w*"
-      
     return {    
       gitignore: atom.config.get 'find-all-words.gitignore' 
-      wordRegexStr, dataPath, paths, suffixes
+      dataPath, paths, suffixes
     }
