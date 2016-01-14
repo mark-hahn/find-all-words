@@ -66,7 +66,6 @@ class Helper
     msg.cmd = cmd
     @pipe.write JSON.stringify msg
 
-# jgkjhg    
   scanned: (msg) ->
     log 'scanned', msg
     @send 'getFilesForWord',  

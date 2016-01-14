@@ -262,9 +262,6 @@ class HelperProcess
     fileIndexes = node[type] ?= new Int32Array FILE_IDX_INC
     for fileIdx, idx in fileIndexes when fileIdx is 0
       fileIndexes[idx] = fileIndex
-      if word is 'asdf'
-        log 'addWordFileIndexToTrie empty', 
-             util.inspect {node, fileIdx, idx, fileIndex, fileIndexes}
       return
     oldLen = fileIndexes.length
     newLen = oldLen + FILE_IDX_INC
@@ -272,9 +269,6 @@ class HelperProcess
     newFileIndexes[FILE_IDX_INC-1] = fileIndex
     newFileIndexes.set fileIndexes, FILE_IDX_INC
     node[type] = newFileIndexes
-    if word is 'asdf'
-      log 'addWordFileIndexToTrie non-empty', 
-           util.inspect {node, fileIndex, newFileIndexes}
   
   getAddWordNodeFromTrie: (word) ->
     node = @wordTrie
@@ -285,15 +279,11 @@ class HelperProcess
     node
   
   traverseWordTrie: (wordIn, caseSensitive, exactWord, type, onFileIndexes) -> 
-    if (asdf = wordIn is 'asdf')
-      log 'traverseWordTrie', util.inspect {wordIn, caseSensitive, exactWord, type}
     visitNode = (node, wordLeft, wordForNode) ->
       if not wordLeft
         if node.as and type in ['all', 'assign']
-          if asdf then log 'as', util.inspect(node.as), wordForNode
           onFileIndexes node.as, wordForNode, 'as'
         if node.no and type in ['all', 'none']
-          if asdf then log 'no', util.inspect(node.no), wordForNode
           onFileIndexes node.no, wordForNode, 'no'
         if exactWord then return
       for letter, childNode of node when letter.length is 1
@@ -329,8 +319,6 @@ class HelperProcess
       bufIdx.writeInt32BE bufIdxLen, 0
       for i in [0...fileIndexes.length]
         bufIdx.writeInt32BE fileIndexes[i], 4 + i*4
-      if word is 'asdf'
-        log 'bufIdx', bufIdx.length, util.inspect {fileIndexes, word, type, bufIdx, fileIndexes}
       fs.writeSync fd, bufIdx, 0, bufIdx.length
       
     fs.closeSync fd
