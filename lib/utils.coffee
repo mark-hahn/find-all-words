@@ -1,4 +1,4 @@
-moment = require 'moment'
+moment =require 'moment'
 
 logWithTime = (args...) -> 
   time = moment().format 'MM-DD HH:mm:ss'

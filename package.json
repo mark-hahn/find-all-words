@@ -19,6 +19,7 @@
     "atom": ">1.0.0"
   },
   "dependencies": {
+    "coffee-script": "^1.10.0",
     "fs-plus": "^2.8.1",
     "gitignore-parser": "0.0.2",
     "moment": "^2.11.1",

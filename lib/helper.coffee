@@ -74,6 +74,9 @@ class Helper
     
   filesForWord: (msg) ->
     log 'filesForWord', msg
+    
+  syntaxError: (msg) ->
+    console.log '\n' + msg.msg + '\n'
 
   destroy: ->
     @child = null

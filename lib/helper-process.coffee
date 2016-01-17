@@ -6,6 +6,7 @@ util      = require 'util'
 utils     = require './helper-utils'
 crypto    = require 'crypto'
 gitParser = require 'gitignore-parser'
+Lexer     = require('coffee-script/lib/coffee-script/lexer').Lexer
 
 FILE_IDX_INC = 2
 ASSIGN_MASK  = 0xC0000000
@@ -19,14 +20,13 @@ log = utils.log
 dbg = utils.dbg
 
 log '-- starting helper process --'
-
-log '-- faw/node version', utils.version, '/', process.version
+log '-- faw, node versions:', utils.version, process.version
 
 process.on 'uncaughtException', (err) ->
   log '-- uncaughtException --'
   log util.inspect err, depth:null
   process.exit 1
-
+  
 class HelperProcess
   constructor: ->
     lastConnection = Date.now()
@@ -159,75 +159,115 @@ class HelperProcess
     yes
   
   checkFile: (filePath) ->
-    @filesChecked++
-    try
-      stats = fs.statSync filePath
-    catch e
-      log 'ERROR on file stat, skipping', filePath, e.message
-      return
-    if not stats.isFile() then return
-    
-    # dbg 'oldFile', filePath, stats.mtime, Object.keys(@filesByPath).length
-    
-    if (oldFile = @filesByPath[filePath])
-      delete oldFile.remove
-    else
-      @filesAdded++ 
-      
-    fileTime = stats.mtime.getTime()
-    if fileTime is oldFile?.time then return
-    
-    @timeMismatchCount++ 
-    
-    try
-      text = fs.readFileSync filePath, 'utf8'
-    catch e
-      log 'ERROR reading file, skipping', filePath, e.message
-      return
-    wordsAssign = {}
-    wordsNone   = {}
-    text.replace /(\S+)(\s|$)/g, (match, word, __, ofs) ->
-      # varRegex = /\b[a-z_$]\W+\b/ig
-      if word not of wordsAssign
-        before = text[0...ofs]
-        after  = text[ofs+word.length...]
-        if /^\s*=/.test(after)                            or
-           /function\s+$/.test(before)                    or
-           /for\s+(\w+,)?\s*$/.test(before) and 
-             /^\s+(in|of)\s/.test(after)                  or
-           /\{([^,}]*,)*([^,:}]+:)?\s*$/.test(before) and 
-             /^\s*(,[^,}]* )*\}\s*=/.test(after)          or
-           /\[([^,\]]*,)*\s*$/.test(before) and 
-             /^\s*(,[^,\]]*)*\]\s*=/.test(after) 
-          wordsAssign[word] = yes
-          delete wordsNone[word]
-        else
-          wordsNone[word] = yes
-      match
-    wordsAssignList = Object.keys(wordsAssign).sort()
-    wordsNoneList   = Object.keys(wordsNone  ).sort()
-    
-    allWords = wordsAssignList.join(';') + ';;' +
-               wordsNoneList  .join(';')
-    fileMd5 = crypto.createHash('md5').update(allWords).digest "hex"
-    
-    if not (fileIndex = oldFile?.index)
-      for file, idx in @filesByIndex when not file
-        break
-      fileIndex = idx
-      
-    @filesByPath[filePath] = @filesByIndex[fileIndex] =
-      {path:filePath, index:fileIndex, time:fileTime, md5:fileMd5}
-    if fileMd5 is oldFile?.md5 then return
-    
-    @md5MismatchCount++
-    @changeCount++
-    
-    if oldFile then @removeFileIndexFromTrie oldFile.index
-    for word in wordsAssignList
-      @addWordFileIndexToTrie word, fileIndex, 'as'
-    for word in wordsNoneList
-      @addWordFileIndexToTrie word, fileIndex, 'no'
+    if (isCS = (path.extname(filePath).toLowerCase() is '.coffee'))
+      source = fs.readFileSync filePath, 'utf8'
+      tokens = []
+      try
+        rawTokens = new Lexer().__proto__.tokenize source
+      catch e
+        if e.toString().indexOf('SyntaxError') is -1
+          log 'tokenizing error:', filePath, util.inspect e
+        else 
+          @parseError filePath, e
+        return
+      for tokenArr in rawTokens
+        tokens.push @parseToken tokenArr
+      if not @debug
+        log filePath, util.inspect tokens
+        @debug = yes
+    return
+
+    #   x=1
+    #   
+    # @filesChecked++
+    # try
+    #   stats = fs.statSync filePath
+    # catch e
+    #   log 'ERROR on file stat, skipping', filePath, e.message
+    #   return
+    # if not stats.isFile() then return
+    # 
+    # # dbg 'oldFile', filePath, stats.mtime, Object.keys(@filesByPath).length
+    # 
+    # if (oldFile = @filesByPath[filePath])
+    #   delete oldFile.remove
+    # else
+    #   @filesAdded++ 
+    #   
+    # fileTime = stats.mtime.getTime()
+    # if fileTime is oldFile?.time then return
+    # 
+    # @timeMismatchCount++ 
+    # 
+    # try
+    #   text = fs.readFileSync filePath, 'utf8'
+    # catch e
+    #   log 'ERROR reading file, skipping', filePath, e.message
+    #   return
+    # words = {}
+    # 
+    # text.replace /([]+)(\s|$)/g, (match, subStr, __, ofs) ->
+    #   ###
+    #     CALL_MASK    = 0x10000000
+    #     ARG_MASK     = 0x08000000
+    #     PARAM_MASK   = 0x04000000
+    #     INDEX_MASK   = 0x02000000
+    #   ###
+    #   checkWordAttrs = (word, isVar) ->
+    #     if /\s*/.test word then return
+    #     before = text[0...ofs]
+    #     after  = text[ofs+word.length...]
+    #     code = 0
+    #     if isVar 
+    #       code |= VAR_MASK
+    #       if not isCS
+    #         if /function\s+$/.test before then code |= FUNC_MASK
+    #         if /^\s*\(/.test after        then code |= CALL_MASK
+    #         if /^\s*=/ .test after        then code |= ASSIGN_MASK
+    #       else
+    #         # if /function\s+$/.test before then code |= FUNC_MASK
+    # 
+    #         
+    #         
+    #         
+    #         if /\s+[^=]+?(\n|$)/.test after then code |= CALL_MASK
+    #         
+    #         if /^\s*=/.test(after)                            or
+    #           /for\s+(\w+,)?\s*$/.test(before)           and 
+    #           /^\s+(in|of)\s/.test(after)                  or
+    #           /\{([^,}]*,)*([^,:}]+:)?\s*$/.test(before) and 
+    #           /^\s*(,[^,}]* )*\}\s*=/.test(after)          or
+    #           /\[([^,\]]*,)*\s*$/.test(before) 
+    #           and /^\s*(,[^,\]]*)*\]\s*=/.test(after) then code |= ASSIGN_MASK
+    #         
+    #     
+    #         
+    #       
+    #     words[word] = code  
+    #   
+    #   text.replace /\b[a-z_$][\W\$]*\b/i.match subStr
+    #   checkWordAttrs(aVar, yes) for aVar in vars
+    #   if vars[0] isnt word then checkSubStr[word, no]
+    #   match
+    #   
+    # wordList = Object.keys(words).sort()
+    # fileMd5 = crypto.createHash('md5').update(wordList.join ' ').digest "hex"
+    # 
+    # if not (fileIndex = oldFile?.index)
+    #   for file, idx in @filesByIndex when not file
+    #     break
+    #   fileIndex = idx
+    #   
+    # @filesByPath[filePath] = @filesByIndex[fileIndex] =
+    #   {path:filePath, index:fileIndex, time:fileTime, md5:fileMd5}
+    # if fileMd5 is oldFile?.md5 then return
+    # 
+    # @md5MismatchCount++
+    # @changeCount++
+    # 
+    # if oldFile then @removeFileFromTrie oldFile
+    # for word in wordList
+    #   @addWordFileToTrie word, file
 
   setAllFileRemoveMarkers: ->
     for file in @filesByIndex when file
@@ -237,13 +277,13 @@ class HelperProcess
     for file in @filesByIndex when file?.remove
       @filesRemoved++
       @changeCount++
-      @removeFileIndexFromTrie file.index
+      @removeFileFromTrie file
       delete @filesByPath[file.path]
       delete @filesByIndex[file.index]
       
-  removeFileIndexFromTrie: (fileIndex) ->
+  removeFileFromTrie: (file) ->
     @traverseWordTrie '', no, no, 'all', (fileIndexes) ->
-      for fileIdx, idx in fileIndexes when fileIdx is fileIndex
+      for fileIndex, idx in fileIndexes when fileIndex is file.index
         fileIndexes[idx] = 0
         return
         
@@ -252,17 +292,17 @@ class HelperProcess
     node = @getAddWordNodeFromTrie word
     node[type] = fileIndexes
   
-  addWordFileIndexToTrie: (word, fileIndex, type) ->
+  addWordFileToTrie: (word, file) ->
     @indexesAdded++
     node = @getAddWordNodeFromTrie word
     fileIndexes = node[type] ?= new Int32Array FILE_IDX_INC
-    for fileIdx, idx in fileIndexes when fileIdx is 0
-      fileIndexes[idx] = fileIndex
+    for fileIndex, idx in fileIndexes when fileIndex is 0
+      fileIndexes[idx] = file.index
       return
     oldLen = fileIndexes.length
     newLen = oldLen + FILE_IDX_INC
     newFileIndexes = new Int32Array newLen
-    newFileIndexes[FILE_IDX_INC-1] = fileIndex
+    newFileIndexes[FILE_IDX_INC-1] = file.index
     newFileIndexes.set fileIndexes, FILE_IDX_INC
     node[type] = newFileIndexes
   
@@ -359,7 +399,39 @@ class HelperProcess
       @filesByPath  = {}
       @wordTrie     = {}
       log 'Warning: data file read err', util.inspect e
-      
+  
+  parseError: (filePath, e) ->
+    log 'parse err', filePath, util.inspect e, depth: null
+    msg = 'Coffeescript Error\nfile skipped:' + filePath + '\n' + e.toString() + 
+         ' at row:col ' + e.location.first_line + ':' + e.location.first_column + ' (to ' +
+                          e.location.last_line  + ':' + e.location.last_column  + ')'
+    @broadcast 'syntaxError', {msg}
+    
+  parseToken: (tokenArr) ->
+    for tokenProp, val of tokenArr
+      switch tokenProp
+        when '0' then token = type: val
+        when '1' then token.text = val
+        when '2'
+          {first_line:   token.row1, last_line:   token.row2,  \
+           first_column: token.col1, last_column: token.col2} = val
+        else token[tokenProp] = val
+    token.col2 += 1
+    if token.origin
+      for prop, val of token.origin
+        switch prop
+          when '0' then token.originText = val
+          when '1' then token.originType = val
+          when '2'
+            if val then \
+              {first_line:   token.originRow1, \
+               last_line:   token.originRow2
+               first_column: token.originCol1
+               last_column: token.originCol2} = val
+            token.originCol2 += 1
+      delete token.origin
+    token
+    
   destroy: -> 
     
 new HelperProcess
